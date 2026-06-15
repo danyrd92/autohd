@@ -1,0 +1,17 @@
+{
+  "version": "1.0.0",
+  "fecha": "2026-06-15",
+  "notas": "Versión inicial.",
+  "archivos": [
+    "VERSION.txt",
+    "HDZ-GUI.ps1",
+    "HDZnew.ps1",
+    "HDZ-Torrent.ps1"
+  ],
+  "herramientas": {
+    "mkvtoolnix": "99.0",
+    "mediainfo": "26.05",
+    "ffmpeg": "latest",
+    "dovi_tool": "latest"
+  }
+}
