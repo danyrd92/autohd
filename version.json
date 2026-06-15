@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "fecha": "2026-06-15",
-  "notas": "Versión inicial.",
+  "notas": "Prueba de Actualización.",
   "archivos": [
     "VERSION.txt",
     "HDZ-GUI.ps1",
