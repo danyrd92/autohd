@@ -4984,8 +4984,27 @@ function Iniciar-ChequeoActualizacion {
         if ($r) {
             $upd = Join-Path $PSScriptRoot "instalacion\Actualizar-HDZStudio.ps1"
             if (Test-Path -LiteralPath $upd) {
-                Start-Process "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$upd`"")
-                $win.Close()
+                # El actualizador sobrescribe los .ps1 en la carpeta del programa. Si esa carpeta NO
+                # es escribible sin permisos (p.ej. instalado en "Archivos de programa"), lo lanzamos
+                # ELEVADO (-Verb RunAs) para que pueda escribir; si es una carpeta de usuario (ZIP en
+                # Documentos/Escritorio) va normal, sin molestar con UAC.
+                $necesitaAdmin = $false
+                try {
+                    $pruebaW = Join-Path $PSScriptRoot ".hdz_wtest_$PID.tmp"
+                    [System.IO.File]::WriteAllText($pruebaW, "x")
+                    Remove-Item -LiteralPath $pruebaW -Force -ErrorAction SilentlyContinue
+                } catch { $necesitaAdmin = $true }
+                $argsUpd = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$upd`"")
+                try {
+                    if ($necesitaAdmin) {
+                        Start-Process "powershell.exe" -Verb RunAs -ArgumentList $argsUpd
+                    } else {
+                        Start-Process "powershell.exe" -ArgumentList $argsUpd
+                    }
+                    $win.Close()
+                } catch {
+                    Set-Estado "Actualización cancelada: no se concedieron permisos de administrador." "warn"
+                }
             } else { Set-Estado "No encuentro el actualizador (instalacion\Actualizar-HDZStudio.ps1)." "error" }
         } else {
             $script:ajusteVerDescartada = $verRemota   # no volver a avisar de ESTA versión
