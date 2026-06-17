@@ -492,6 +492,9 @@ $xaml = @'
                 <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
                 <Setter Property="Foreground" Value="White"/>
               </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Opacity" Value="0.35"/>
+              </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -640,8 +643,16 @@ $xaml = @'
           <Border Height="1" Background="#2A2A3C" Margin="6,14,6,14"/>
           <RadioButton x:Name="navAjustes"  Style="{StaticResource Nav}" GroupName="nav" Content="⚙   Ajustes / claves"/>
         </StackPanel>
-        <Button x:Name="btnColapsar" DockPanel.Dock="Bottom" Style="{StaticResource GhostMini}" Content="☰"
-                HorizontalAlignment="Left" FontSize="15" Padding="9,3" Margin="2,12,0,0" ToolTip="Ocultar / mostrar el menú"/>
+        <Grid DockPanel.Dock="Bottom" Margin="2,12,2,0">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+          <TextBlock x:Name="lblVersion" Grid.Column="0" VerticalAlignment="Center" Foreground="#56565E"
+                     FontSize="11" Margin="11,0,0,0" Text=""/>
+          <Button x:Name="btnColapsar" Grid.Column="1" Style="{StaticResource GhostMini}" Content="☰"
+                  FontSize="15" Padding="9,3" ToolTip="Ocultar / mostrar el menú"/>
+        </Grid>
         <TextBlock x:Name="lblPie" DockPanel.Dock="Bottom" VerticalAlignment="Bottom" Foreground="#56565E" FontSize="11"
                    TextWrapping="Wrap" Margin="13,0,0,10"
                    Text="Las opciones se adaptan a lo detectado en tus vídeos. Todo se decide aquí: el montaje corre sin preguntar nada en consola."/>
@@ -672,6 +683,20 @@ $xaml = @'
           </Grid>
           <TextBlock x:Name="lblCarpetaDesc" Style="{StaticResource D}" Margin="2,8,0,0"
                      Text="Carpeta con los vídeos a procesar. Las opciones se adaptan a lo que se detecte."/>
+          <!-- Aviso: hay originales renombrados «.procesado» en la carpeta. Botón para revertirlos. -->
+          <Border x:Name="panProcesado" Visibility="Collapsed" Background="#1C1407" BorderBrush="{StaticResource WarnBrush}"
+                  BorderThickness="1" CornerRadius="8" Padding="13,11" Margin="2,11,0,2">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+              <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                <TextBlock x:Name="lblProcesado" Foreground="{StaticResource WarnBrush}" FontWeight="SemiBold" FontSize="13" Text=""/>
+                <TextBlock Style="{StaticResource D}" Margin="0,3,0,0"
+                           Text="Se renombraron con «.procesado» al conservarse como originales. Quita ese sufijo para volver a trabajar con ellos."/>
+              </StackPanel>
+              <Button x:Name="btnQuitarProcesado" Grid.Column="1" Style="{StaticResource PrimarySmall}" VerticalAlignment="Center"
+                      Margin="12,0,0,0" Content="Quitar «.procesado»"/>
+            </Grid>
+          </Border>
         </StackPanel>
       </Border>
 
@@ -711,13 +736,7 @@ $xaml = @'
                 <WrapPanel x:Name="chModoLote" Margin="0,11,0,-8"/>
               </StackPanel>
             </Border>
-            <Border Style="{StaticResource Card}">
-              <StackPanel>
-                <TextBlock Style="{StaticResource H}" Text="Capturas por archivo"/>
-                <TextBlock Style="{StaticResource D}" Text="Imágenes JPG del resultado final (con tonemapping si el vídeo es HDR)."/>
-                <WrapPanel x:Name="chCapturas" Margin="0,11,0,-8"/>
-              </StackPanel>
-            </Border>
+            <!-- Las capturas se configuran SIEMPRE en el panel «Proyecto» (en todos los modos). -->
             <Border Style="{StaticResource Card}">
               <StackPanel>
                 <TextBlock Style="{StaticResource H}" Text="Archivos originales al terminar"/>
@@ -755,7 +774,7 @@ $xaml = @'
                   <TextBox x:Name="txtSalidaArchivo" Style="{StaticResource Input}"/>
                   <Button x:Name="btnSalidaArchivo" Style="{StaticResource Ghost}" Grid.Column="1" Margin="8,0,0,0" Content="Examinar…"/>
                 </Grid>
-                <TextBlock Style="{StaticResource Lbl}" Text="Archivo .torrent"/>
+                <TextBlock x:Name="lblSalidaTorrent" Style="{StaticResource Lbl}" Text="Archivo .torrent"/>
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                   <TextBox x:Name="txtSalidaTorrent" Style="{StaticResource Input}"/>
@@ -789,6 +808,22 @@ $xaml = @'
               <TextBlock Style="{StaticResource D}" Margin="0"
                          Text="El título y el año se usan para nombrar el resultado. El título es obligatorio: el montaje no pregunta nada en consola."/>
             </Border>
+            <!-- Barra de pestañas (una por película) — solo en modo «Cada archivo distinto».
+                 Réplica de la tira de pestañas de «Torrent y subida»: cada pestaña tiene su propia
+                 identidad (título, año, origen, plataforma) y el nombre completo del archivo. -->
+            <StackPanel x:Name="panProyTabs" Visibility="Collapsed">
+              <TextBlock Style="{StaticResource D}" Margin="2,0,0,8" Text="Cada pestaña es una película distinta del lote: dale a cada una su propio título, año, origen y plataforma. El nombre de la pestaña es el archivo."/>
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Button x:Name="btnTabProyIzq" Style="{StaticResource GhostMini}" Grid.Column="0" Content="◀" Margin="0,0,3,0" VerticalAlignment="Bottom" Visibility="Collapsed"/>
+                <ScrollViewer x:Name="scrTabsProy" Grid.Column="1" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" VerticalAlignment="Bottom">
+                  <StackPanel x:Name="panTabsProy" Orientation="Horizontal" HorizontalAlignment="Left"/>
+                </ScrollViewer>
+                <Button x:Name="btnTabProyDer" Style="{StaticResource GhostMini}" Grid.Column="2" Content="▶" Margin="3,0,0,0" VerticalAlignment="Bottom" Visibility="Collapsed"/>
+              </Grid>
+            </StackPanel>
             <StackPanel x:Name="panProyectoDatos">
               <Border Style="{StaticResource Card}">
                 <StackPanel>
@@ -846,6 +881,15 @@ $xaml = @'
                   </StackPanel>
                 </StackPanel>
               </Border>
+              <!-- Capturas POR PELÍCULA: solo visible en modo «Cada archivo distinto» (cada pestaña
+                   puede tener su propio número de capturas). En modo homogéneo se usa el de «General». -->
+              <Border x:Name="cardCapturasProy" Style="{StaticResource Card}">
+                <StackPanel>
+                  <TextBlock Style="{StaticResource H}" Text="Capturas por archivo"/>
+                  <TextBlock Style="{StaticResource D}" Text="Imágenes JPG del resultado final (con tonemapping si el vídeo es HDR). En «Cada archivo distinto», cada película puede tener su propio número."/>
+                  <WrapPanel x:Name="chCapturasProy" Margin="0,11,0,-8"/>
+                </StackPanel>
+              </Border>
               <!-- En modo heterogéneo aplicamos estos datos a todos los archivos (sin preguntar por
                    archivo en consola). El switch se conserva oculto y marcado. -->
               <Border Style="{StaticResource Card}" Visibility="Collapsed">
@@ -859,6 +903,18 @@ $xaml = @'
 
           <!-- ============ AUDIO ============ -->
           <StackPanel x:Name="panAudio" Visibility="Collapsed">
+            <!-- Pestañas por película (modo «Cada archivo distinto»): el audio se configura por peli. -->
+            <StackPanel x:Name="panProyTabsA" Visibility="Collapsed">
+              <TextBlock Style="{StaticResource D}" Margin="2,0,0,8" Text="Configurando el AUDIO de cada película por separado. Cambia de pestaña para otra."/>
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <Button x:Name="btnTabProyAIzq" Style="{StaticResource GhostMini}" Grid.Column="0" Content="◀" Margin="0,0,3,0" VerticalAlignment="Bottom" Visibility="Collapsed"/>
+                <ScrollViewer x:Name="scrTabsProyA" Grid.Column="1" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" VerticalAlignment="Bottom">
+                  <StackPanel x:Name="panTabsProyA" Orientation="Horizontal" HorizontalAlignment="Left"/>
+                </ScrollViewer>
+                <Button x:Name="btnTabProyADer" Style="{StaticResource GhostMini}" Grid.Column="2" Content="▶" Margin="3,0,0,0" VerticalAlignment="Bottom" Visibility="Collapsed"/>
+              </Grid>
+            </StackPanel>
             <Border x:Name="cardDTS" Style="{StaticResource Card}">
               <StackPanel>
                 <Grid>
@@ -900,6 +956,18 @@ $xaml = @'
 
           <!-- ============ SUBTÍTULOS ============ -->
           <StackPanel x:Name="panSubs" Visibility="Collapsed">
+            <!-- Pestañas por película (modo «Cada archivo distinto»): los subtítulos se configuran por peli. -->
+            <StackPanel x:Name="panProyTabsS" Visibility="Collapsed">
+              <TextBlock Style="{StaticResource D}" Margin="2,0,0,8" Text="Configurando los SUBTÍTULOS de cada película por separado. Cambia de pestaña para otra."/>
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <Button x:Name="btnTabProySIzq" Style="{StaticResource GhostMini}" Grid.Column="0" Content="◀" Margin="0,0,3,0" VerticalAlignment="Bottom" Visibility="Collapsed"/>
+                <ScrollViewer x:Name="scrTabsProyS" Grid.Column="1" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" VerticalAlignment="Bottom">
+                  <StackPanel x:Name="panTabsProyS" Orientation="Horizontal" HorizontalAlignment="Left"/>
+                </ScrollViewer>
+                <Button x:Name="btnTabProySDer" Style="{StaticResource GhostMini}" Grid.Column="2" Content="▶" Margin="3,0,0,0" VerticalAlignment="Bottom" Visibility="Collapsed"/>
+              </Grid>
+            </StackPanel>
             <Border x:Name="cardUndSub" Style="{StaticResource Card}" Visibility="Collapsed">
               <StackPanel>
                 <Grid>
@@ -1295,18 +1363,21 @@ public static extern void SetCurrentProcessExplicitAppUserModelID([System.Runtim
 # REFERENCIAS A CONTROLES
 # =========================================================================
 $refs = @("txtCarpeta","btnExaminar","lblResumen","panListado","imgLogo","panLogoTexto",
-          "btnSelTodos","btnSelNinguno",
-          "sidebar","btnColapsar","lblSecMontaje","lblSecTorrent","lblPie","panSubidaBody","lblCarpetaDesc",
+          "btnSelTodos","btnSelNinguno","panProcesado","lblProcesado","btnQuitarProcesado",
+          "sidebar","btnColapsar","lblVersion","lblSecMontaje","lblSecTorrent","lblPie","panSubidaBody","lblCarpetaDesc",
           "navGeneral","navProyecto","navAudio","navSubs",
           "panGeneral","panProyecto","panAudio","panSubs",
-          "chModoLote","chCapturas","chOriginales","chSufijo","chReprocesar",
+          "chModoLote","chOriginales","chSufijo","chReprocesar",
           "chTorrent","panTorrentDatos","txtAnnounce","panPackNombre","txtPackNombre",
-          "txtSalidaArchivo","btnSalidaArchivo","txtSalidaTorrent","btnSalidaTorrent",
+          "txtSalidaArchivo","btnSalidaArchivo","txtSalidaTorrent","btnSalidaTorrent","lblSalidaTorrent",
           "bdgModoLote","bdgReprocesar","bdgDTS","bdgDefAudio","bdgUndAudio","bdgUndSub",
           "bdgFiltro","bdgSubsUnicos","bdgPGS","lblSugerencia",
           "cardModoLote","cardReprocesar","cardDTS","cardDefAudio","cardUndAudio","cardUndSub",
           "cardFiltro","cardSubsUnicos","cardPGS","phAudio","phSubs","panUndAudio","panUndSub",
           "swProyecto","panProyectoDatos","txtTitulo","txtAno","swSerie",
+          "panProyTabs","panTabsProy","scrTabsProy","btnTabProyIzq","btnTabProyDer","cardCapturasProy","chCapturasProy",
+          "panProyTabsA","panTabsProyA","scrTabsProyA","btnTabProyAIzq","btnTabProyADer",
+          "panProyTabsS","panTabsProyS","scrTabsProyS","btnTabProySIzq","btnTabProySDer",
           "chOrigen","panWeb","chWebTipo","cmbPlataforma","txtPlataformaOtra",
           "panFisico","cmbFormato","txtFormatoOtro","txtEtiquetas","swAplicarTodos",
           "chDTS","chDefAudio",
@@ -1445,10 +1516,27 @@ function Actualizar-Filtro {
 function Actualizar-Torrent {
     if (-not $ui -or -not $ui.panTorrentDatos) { return }
     $v = Get-ChipValor "torrent"
-    $ui.panTorrentDatos.Visibility = if ("$v" -in @("INDIVIDUAL", "PACK", "AMBOS")) { "Visible" } else { "Collapsed" }
+    $crearTorrent = ("$v" -in @("INDIVIDUAL", "PACK", "AMBOS"))
+    $ui.panTorrentDatos.Visibility = if ($crearTorrent) { "Visible" } else { "Collapsed" }
     $ui.panPackNombre.Visibility   = if ("$v" -in @("PACK", "AMBOS")) { "Visible" } else { "Collapsed" }
+    # Si no se va a crear torrent, no tiene sentido elegir dónde guardarlo: deshabilita la ubicación.
+    if ($ui.txtSalidaTorrent) { $ui.txtSalidaTorrent.IsEnabled = $crearTorrent }
+    if ($ui.btnSalidaTorrent) { $ui.btnSalidaTorrent.IsEnabled = $crearTorrent }
+    if ($ui.lblSalidaTorrent) { $ui.lblSalidaTorrent.Opacity   = if ($crearTorrent) { 1.0 } else { 0.4 } }
     Rellenar-PackNombre
 }
+
+# Último valor que la identificación automática escribió en Título/Año/Serie. Sirve para que, al
+# CAMBIAR de carpeta de vídeos, la sugerencia se actualice sola SIN pisar lo que el usuario haya
+# editado a mano: solo se sobrescribe si el campo sigue conteniendo el último valor automático
+# (o está vacío). Mismo criterio que usa el nombre del pack.
+$script:tituloAutoVal = ""
+$script:anoAutoVal    = ""
+$script:serieAutoVal  = $null   # $null = aún no sugerido automáticamente
+# Carpeta cuya identificación ya se aplicó. Si la carpeta escaneada NO coincide con esta, es que el
+# usuario ha cambiado de carpeta → se fuerza la reidentificación (aunque el campo tuviera un valor
+# heredado de la sesión anterior). Dentro de la MISMA carpeta se respetan las ediciones manuales.
+$script:carpetaIdentificada = ""
 
 # Nombre automático del pack: el del primer episodio seleccionado quitándole el "Exx" (S01E01 → S01),
 # es decir el nombre del episodio sin el número de capítulo. Coincide con la convención que usa
@@ -1499,11 +1587,10 @@ function Reconstruir-ChipsIdiomas($detectados = $null) {
 # =========================================================================
 # Sin opción «Preguntar»: la GUI decide TODO, el montaje corre sin prompts en consola.
 # El primer valor de cada grupo es el predeterminado (índice 0, salvo que se indique otro).
-Add-ChipGroup $ui.chModoLote "modoLote" @(
-    @{T="Mismo proyecto (temporada)"; V="HOMOGENEO"},
-    @{T="Cada archivo distinto"; V="HETEROGENEO"}
-)
-Add-ChipGroup $ui.chCapturas "capturas" @(0,1,2,3,4,5,6,8,10 | ForEach-Object { @{T=$(if ($_ -eq 0) { "Ninguna" } else { "$_" }); V=$_} }) 6
+# El chip «modoLote» se registra MÁS ABAJO (tras definir Actualizar-ModoLote), porque su callback
+# se dispara al marcar la opción por defecto durante la creación y la función debe existir ya.
+# Capturas por archivo (SIEMPRE en el panel «Proyecto», en todos los modos).
+Add-ChipGroup $ui.chCapturasProy "capturasProy" @(0,1,2,3,4,5,6,8,10,15,20,30 | ForEach-Object { @{T=$(if ($_ -eq 0) { "Ninguna" } else { "$_" }); V=$_} }) 6
 Add-ChipGroup $ui.chOriginales "originales" @(
     @{T="Conservarlos (.procesado)"; V=$false},
     @{T="Borrarlos"; V=$true}
@@ -1820,6 +1907,13 @@ function Aplicar-Analisis($filas) {
         if (-not $gruposSel.Contains($k)) { $gruposSel[$k] = @() }
         $gruposSel[$k] += $f
     }
+    # Grupos (= películas) para las pestañas de proyecto del modo heterogéneo: cada grupo aporta
+    # su archivo principal (1º) y la lista de archivos que comparten identidad.
+    $script:gruposProy = @()
+    foreach ($k in $gruposSel.Keys) {
+        $archs = @($gruposSel[$k] | ForEach-Object { $_.Nombre })
+        if ($archs.Count -gt 0) { $script:gruposProy += @{ Clave = $k; Principal = $archs[0]; Archivos = $archs } }
+    }
 
     # ---- detecciones globales (sobre los SELECCIONADOS) ----
     $archivosDTS  = @($sel | Where-Object { @($_.Audios | Where-Object { $_.Codec -match "dts" }).Count -gt 0 })
@@ -1991,6 +2085,9 @@ function Aplicar-Analisis($filas) {
     } else {
         $ui.cardReprocesar.Visibility = "Collapsed"
     }
+    # Tarjetas de audio/subtítulos: en modo HOMOGÉNEO se construyen aquí del agregado; en
+    # HETEROGENEO las construye Aplicar-TabActiva por pestaña (con el archivo de cada película).
+    if ((Get-ChipValor "modoLote") -ne "HETEROGENEO") {
     # DTS
     if ($archivosDTS.Count -gt 0) {
         $ui.cardDTS.Visibility = "Visible"
@@ -2056,6 +2153,7 @@ function Aplicar-Analisis($filas) {
     $subsVacio = ($ui.cardUndSub.Visibility -ne "Visible") -and ($ui.cardFiltro.Visibility -ne "Visible") -and
                  ($ui.cardSubsUnicos.Visibility -ne "Visible") -and ($ui.cardPGS.Visibility -ne "Visible")
     $ui.phSubs.Visibility = if ($subsVacio) { "Visible" } else { "Collapsed" }
+    }  # fin tarjetas modo HOMOGÉNEO
 
     # Selección vacía: no hay nada que adaptar ni sugerir; avisar y salir.
     if ($sel.Count -eq 0) {
@@ -2066,15 +2164,48 @@ function Aplicar-Analisis($filas) {
         return
     }
 
-    # ---- sugerencia de proyecto ----
+    # ---- identificación de proyecto ----
+    # En modo «Cada archivo distinto» (HETEROGENEO) la identidad es POR pestaña/película:
+    # reconstruimos las pestañas (autorrellenando cada una de su nombre) en vez de la identidad única.
+    if ((Get-ChipValor "modoLote") -eq "HETEROGENEO") {
+        $ui.lblSugerencia.Visibility = "Collapsed"
+        Reconstruir-TabsProy
+        Set-Estado "Análisis completado: $($sel.Count) de $($filas.Count) vídeo(s), $($gruposSel.Keys.Count) película(s) — revisa cada pestaña."
+        Rellenar-PackNombre
+        return
+    }
+    # ---- sugerencia de proyecto (modo homogéneo: una sola identidad para todo el lote) ----
     $sug = Sugerir-Proyecto @($sel | ForEach-Object { $_.Nombre })
     if ($sug) {
         $cambios = @()
-        if ($sug.Titulo -and [string]::IsNullOrWhiteSpace($ui.txtTitulo.Text)) { $ui.txtTitulo.Text = $sug.Titulo; $cambios += "título" }
-        if ($sug.Ano -and [string]::IsNullOrWhiteSpace($ui.txtAno.Text))       { $ui.txtAno.Text = $sug.Ano; $cambios += "año" }
-        if ($sug.Serie -and -not $ui.swSerie.IsChecked)                        { $ui.swSerie.IsChecked = $true; $cambios += "serie" }
+        # ¿Es la primera identificación de ESTA carpeta? Si cambiaste de carpeta, se fuerza la
+        # reidentificación (sobrescribe aunque el campo tuviera un valor heredado). Dentro de la
+        # misma carpeta NO se fuerza: se respeta lo que hayas escrito a mano.
+        $forzar = ($script:carpetaScan -ne $script:carpetaIdentificada)
+        # Título: sobrescribir si se fuerza, o si está vacío, o si aún contiene la última sugerencia.
+        $tActual = "$($ui.txtTitulo.Text)"
+        if ($sug.Titulo -and ($forzar -or [string]::IsNullOrWhiteSpace($tActual) -or $tActual -eq $script:tituloAutoVal)) {
+            if ($tActual -ne $sug.Titulo) { $cambios += "título" }
+            $ui.txtTitulo.Text = $sug.Titulo
+            $script:tituloAutoVal = $sug.Titulo
+        }
+        # Año: mismo criterio. Si la nueva carpeta no aporta año, se limpia el heredado.
+        $aActual = "$($ui.txtAno.Text)"
+        if ($forzar -or [string]::IsNullOrWhiteSpace($aActual) -or $aActual -eq $script:anoAutoVal) {
+            if ($aActual -ne "$($sug.Ano)") { if ($sug.Ano) { $cambios += "año" } }
+            $ui.txtAno.Text = "$($sug.Ano)"
+            $script:anoAutoVal = "$($sug.Ano)"
+        }
+        # Serie: se ajusta al forzar, o si no la has tocado desde la última sugerencia.
+        if ($forzar -or ($null -eq $script:serieAutoVal) -or ([bool]$ui.swSerie.IsChecked -eq $script:serieAutoVal)) {
+            if ([bool]$ui.swSerie.IsChecked -ne [bool]$sug.Serie) { $cambios += "serie" }
+            $ui.swSerie.IsChecked = [bool]$sug.Serie
+            $script:serieAutoVal  = [bool]$sug.Serie
+        }
+        # Esta carpeta ya queda identificada: los próximos escaneos de la MISMA carpeta no fuerzan.
+        $script:carpetaIdentificada = $script:carpetaScan
         if ($cambios.Count -gt 0) {
-            $ui.lblSugerencia.Text = "✦ Sugerido del nombre de archivo ($($cambios -join ', ')) — revísalo."
+            $ui.lblSugerencia.Text = "✦ Identificado del nombre de archivo ($($cambios -join ', ')) — revísalo."
             $ui.lblSugerencia.Visibility = "Visible"
         }
     }
@@ -2104,9 +2235,360 @@ $script:pollTimer.Add_Tick({
     }
 })
 
+# Detecta originales renombrados «.procesado» en la carpeta actual y muestra/oculta el aviso.
+$script:archivosProcesado = @()
+function Actualizar-Procesado {
+    if (-not $ui -or -not $ui.panProcesado) { return }
+    $carpeta = "$($ui.txtCarpeta.Text)".Trim()
+    $procesados = @()
+    if ($carpeta -and (Test-Path -LiteralPath $carpeta)) {
+        try { $procesados = @(Get-ChildItem -LiteralPath $carpeta -File -Filter "*.procesado" -ErrorAction SilentlyContinue) } catch {}
+    }
+    $script:archivosProcesado = $procesados
+    if ($procesados.Count -gt 0) {
+        $ui.lblProcesado.Text = "⚠  Hay $($procesados.Count) archivo(s) marcados como «.procesado» en esta carpeta."
+        $ui.panProcesado.Visibility = "Visible"
+    } else {
+        $ui.panProcesado.Visibility = "Collapsed"
+    }
+}
+
+# =========================================================================
+# PESTAÑAS DE PROYECTO (modo «Cada archivo distinto»): una por película, cada una
+# con su propia identidad. Mismo patrón que las pestañas de «Torrent y subida»:
+# snapshot del estado actual al cambiar de pestaña y restauración del estado destino.
+# =========================================================================
+$script:tabsProy = @()         # cada elem: @{ Principal=<nombre archivo>; Archivos=@(...); Estado=@{...} }
+$script:tabProyActual = -1
+$script:gruposProy = @()       # grupos (películas) del último análisis: @{ Clave; Principal; Archivos }
+
+function Nuevo-EstadoProy {
+    # Capturas por defecto = el valor global del panel General (chip «capturas»), para no sorprender.
+    $capDef = Get-ChipValor "capturasProy"; if ($null -eq $capDef) { $capDef = 6 }
+    @{ Titulo=""; Ano=""; EsSerie=$false; Origen="WEB"; WebTipo="WEB-DL"
+       PlatIdx=0; PlatOtra=""; FmtIdx=0; FmtOtro=""; Etiquetas=""; Capturas=$capDef }
+}
+function Snapshot-Proyecto {
+    @{
+        Titulo  = "$($ui.txtTitulo.Text)"; Ano = "$($ui.txtAno.Text)"; EsSerie = [bool]$ui.swSerie.IsChecked
+        Origen  = (Get-ChipValor "origen"); WebTipo = (Get-ChipValor "webTipo")
+        PlatIdx = $ui.cmbPlataforma.SelectedIndex; PlatOtra = "$($ui.txtPlataformaOtra.Text)"
+        FmtIdx  = $ui.cmbFormato.SelectedIndex;    FmtOtro  = "$($ui.txtFormatoOtro.Text)"
+        Etiquetas = "$($ui.txtEtiquetas.Text)"; Capturas = (Get-ChipValor "capturasProy")
+    }
+}
+function Restore-Proyecto($s) {
+    $ui.txtTitulo.Text = "$($s.Titulo)"; $ui.txtAno.Text = "$($s.Ano)"; $ui.swSerie.IsChecked = [bool]$s.EsSerie
+    if ($s.Origen)  { Set-ChipValor "origen"  $s.Origen }
+    if ($s.WebTipo) { Set-ChipValor "webTipo" $s.WebTipo }
+    if ([int]$s.PlatIdx -ge 0 -and [int]$s.PlatIdx -lt $ui.cmbPlataforma.Items.Count) { $ui.cmbPlataforma.SelectedIndex = [int]$s.PlatIdx }
+    $ui.txtPlataformaOtra.Text = "$($s.PlatOtra)"
+    if ([int]$s.FmtIdx -ge 0 -and [int]$s.FmtIdx -lt $ui.cmbFormato.Items.Count) { $ui.cmbFormato.SelectedIndex = [int]$s.FmtIdx }
+    $ui.txtFormatoOtro.Text = "$($s.FmtOtro)"
+    $ui.txtEtiquetas.Text   = "$($s.Etiquetas)"
+    if ($null -ne $s.Capturas) { Set-ChipValor "capturasProy" $s.Capturas }
+    Actualizar-Proyecto   # ajusta visibilidad WEB/Físico según el origen restaurado
+}
+# Las 3 barras de pestañas (Proyecto, Audio, Subtítulos) comparten estado y se dibujan iguales.
+function Get-ScrollersProy {
+    @($ui.scrTabsProy, $ui.scrTabsProyA, $ui.scrTabsProyS)
+}
+function Get-PanelesTabsProy {
+    @(
+        @{ Pan = $ui.panTabsProy;  Scr = $ui.scrTabsProy;  Izq = $ui.btnTabProyIzq;  Der = $ui.btnTabProyDer },
+        @{ Pan = $ui.panTabsProyA; Scr = $ui.scrTabsProyA; Izq = $ui.btnTabProyAIzq; Der = $ui.btnTabProyADer },
+        @{ Pan = $ui.panTabsProyS; Scr = $ui.scrTabsProyS; Izq = $ui.btnTabProySIzq; Der = $ui.btnTabProySDer }
+    )
+}
+function Update-FlechasTabsProy {
+    foreach ($b in Get-PanelesTabsProy) {
+        if (-not $b.Scr -or -not $b.Pan) { continue }
+        $vp = $b.Scr.ViewportWidth
+        if ($vp -le 1) { $b.Izq.Visibility = "Collapsed"; $b.Der.Visibility = "Collapsed"; continue }
+        $vis = if ($b.Scr.ExtentWidth -gt ($vp + 1)) { "Visible" } else { "Collapsed" }
+        $b.Izq.Visibility = $vis; $b.Der.Visibility = $vis
+    }
+}
+function Construir-TabBarProy {
+    foreach ($b in Get-PanelesTabsProy) {
+        if (-not $b.Pan) { continue }
+        $b.Pan.Children.Clear()
+        for ($i = 0; $i -lt @($script:tabsProy).Count; $i++) {
+            $idx = $i
+            $titulo = "$($script:tabsProy[$i].Principal)"
+            if ([string]::IsNullOrWhiteSpace($titulo)) { $titulo = "Película $($i+1)" }
+            $cont = New-Object System.Windows.Controls.Border
+            $cont.CornerRadius = [System.Windows.CornerRadius]::new(7,7,0,0)
+            $cont.Cursor = [System.Windows.Input.Cursors]::Hand
+            if ($i -eq $script:tabProyActual) {
+                $cont.Background = (Brocha "#0E0E11"); $cont.BorderBrush = $win.Resources["AccentBrush"]
+                $cont.BorderThickness = [System.Windows.Thickness]::new(0,2,0,0); $cont.Margin = [System.Windows.Thickness]::new(0,0,3,-1)
+                $cont.Padding = [System.Windows.Thickness]::new(13,7,13,8)
+            } else {
+                $cont.Background = (Brocha "#17171C"); $cont.BorderBrush = $win.Resources["CardBorderBrush"]
+                $cont.BorderThickness = [System.Windows.Thickness]::new(1); $cont.Margin = [System.Windows.Thickness]::new(0,4,3,0)
+                $cont.Padding = [System.Windows.Thickness]::new(13,5,13,6)
+            }
+            $t = New-Object System.Windows.Controls.TextBlock
+            $t.Text = $titulo; $t.VerticalAlignment = "Center"; $t.FontSize = 12; $t.ToolTip = $titulo
+            $t.Foreground = $(if ($i -eq $script:tabProyActual) { [System.Windows.Media.Brushes]::White } else { $win.Resources["SubBrush"] })
+            $cont.Child = $t
+            $cont.Add_MouseLeftButtonUp({ param($snd, $e) Cambiar-TabProy $idx }.GetNewClosure())
+            [void]$b.Pan.Children.Add($cont)
+        }
+    }
+    Update-FlechasTabsProy
+}
+function Cambiar-TabProy($idx) {
+    if ($idx -eq $script:tabProyActual -or $idx -lt 0 -or $idx -ge @($script:tabsProy).Count) { return }
+    if ($script:tabProyActual -ge 0 -and $script:tabProyActual -lt @($script:tabsProy).Count) {
+        $script:tabsProy[$script:tabProyActual].Estado = Snapshot-Proyecto
+        $script:tabsProy[$script:tabProyActual].Decisiones = Snapshot-DecisionesTab
+    }
+    $script:tabProyActual = $idx
+    Restore-Proyecto $script:tabsProy[$idx].Estado
+    Aplicar-TabActiva          # reconstruye las tarjetas de audio/subs de esta peli y aplica sus decisiones
+    Construir-TabBarProy
+}
+# Reconstruye las pestañas a partir de los grupos del último análisis ($script:gruposProy),
+# conservando lo que el usuario ya hubiera editado (indexado por archivo principal) y
+# autorrellenando las pestañas nuevas desde el nombre del archivo.
+function Reconstruir-TabsProy {
+    if (-not $ui.panTabsProy) { return }
+    if ($script:tabProyActual -ge 0 -and $script:tabProyActual -lt @($script:tabsProy).Count) {
+        $script:tabsProy[$script:tabProyActual].Estado = Snapshot-Proyecto
+        $script:tabsProy[$script:tabProyActual].Decisiones = Snapshot-DecisionesTab
+    }
+    $previos = @{}
+    foreach ($t in @($script:tabsProy)) { if ($t.Principal) { $previos[$t.Principal] = $t } }
+    $nuevas = @()
+    foreach ($g in @($script:gruposProy)) {
+        if ($previos.ContainsKey($g.Principal)) {
+            $t = $previos[$g.Principal]; $t.Archivos = $g.Archivos; $nuevas += $t
+        } else {
+            $est = Nuevo-EstadoProy
+            $sug = Sugerir-Proyecto @($g.Principal)
+            if ($sug) { $est.Titulo = "$($sug.Titulo)"; $est.Ano = "$($sug.Ano)"; $est.EsSerie = [bool]$sug.Serie }
+            # Decisiones = $null → al activar la pestaña se usan los valores por defecto de sus tarjetas.
+            $nuevas += @{ Principal = $g.Principal; Archivos = $g.Archivos; Estado = $est; Decisiones = $null }
+        }
+    }
+    $script:tabsProy = @($nuevas)
+    if (@($script:tabsProy).Count -eq 0) { $script:tabProyActual = -1; Construir-TabBarProy; return }
+    if ($script:tabProyActual -lt 0 -or $script:tabProyActual -ge @($script:tabsProy).Count) { $script:tabProyActual = 0 }
+    # Pre-cargar las decisiones por defecto de CADA pestaña (construyendo sus tarjetas una vez), para
+    # poder enviar valores correctos aunque el usuario no llegue a abrir esa pestaña (p.ej. pistas und).
+    for ($i = 0; $i -lt @($script:tabsProy).Count; $i++) {
+        if ($null -eq $script:tabsProy[$i].Decisiones) {
+            $nombresI = @($script:tabsProy[$i].Archivos)
+            $scopeI = @($script:ultimoScan | Where-Object { $nombresI -contains $_.Nombre })
+            Construir-Adaptacion $scopeI
+            $script:tabsProy[$i].Decisiones = Snapshot-DecisionesTab
+        }
+    }
+    Restore-Proyecto $script:tabsProy[$script:tabProyActual].Estado
+    Aplicar-TabActiva          # deja en pantalla las tarjetas de la pestaña activa
+    Construir-TabBarProy
+}
+# --- FASE 2: tarjetas de audio/subtítulos POR PESTAÑA ---
+# Reconstruye SOLO las tarjetas de adaptación (DTS, audio por defecto, pistas und, filtro de
+# idiomas, subs únicos, PGS) a partir de un subconjunto de archivos ($selScope = entradas de
+# $script:ultimoScan). Es una copia parametrizada de la misma lógica de Aplicar-Analisis, para
+# poder mostrar las tarjetas del archivo de la pestaña activa sin tocar el camino homogéneo.
+function Construir-Adaptacion($selScope) {
+    $selScope = @($selScope | Where-Object { $_ })
+    # Construir-FilasUnd ACUMULA en $script:undRows (no lo resetea): al construir varias pestañas
+    # seguidas se mezclarían las pistas. Lo limpiamos aquí para que cada ámbito empiece de cero.
+    $script:undRows = @()
+    $gruposScope = [ordered]@{}
+    foreach ($f in $selScope) {
+        $k = (([System.IO.Path]::GetFileNameWithoutExtension($f.Nombre) -replace $normalizadorAgrupacion, "") -replace "\s+", " ").Trim()
+        if (-not $gruposScope.Contains($k)) { $gruposScope[$k] = @() }
+        $gruposScope[$k] += $f
+    }
+    # Detecciones
+    $archivosDTS  = @($selScope | Where-Object { @($_.Audios | Where-Object { $_.Codec -match "dts" }).Count -gt 0 })
+    $archivosPGS  = @($selScope | Where-Object { @($_.Subs | Where-Object { $_.EsPGS }).Count -gt 0 })
+    $pistasUndAudio = @(); $pistasUndSub = @(); $archUndAudio = @{}; $archUndSub = @{}; $idiomasSubs = [ordered]@{}
+    foreach ($f in $selScope) {
+        foreach ($a in $f.Audios) {
+            if ((ConvCanon $a.Lang $a.Title) -eq "und") {
+                $archUndAudio[$f.Nombre] = $true
+                $etCodec = switch -Regex ("$($a.Codec)") {
+                    "^eac3$" { "DD+" } "^ac3$" { "DD" } "^truehd$" { "TrueHD" }
+                    "^dts$"  { if ("$($a.Profile)" -match "MA") { "DTS-HD MA" } else { "DTS" } }
+                    default  { "$($a.Codec)".ToUpper() }
+                }
+                $etiq = "$($f.Nombre)  —  pista $($a.Index) · $etCodec"
+                if ($a.Title) { $etiq += " · «$($a.Title)»" }
+                $pistasUndAudio += @{ Archivo = $f.Ruta; Id = $a.Index; Etiqueta = $etiq }
+            }
+        }
+        foreach ($s in $f.Subs) {
+            $c = ConvCanon $s.Lang $s.Title
+            if ($c -eq "und") {
+                $archUndSub[$f.Nombre] = $true
+                $fmt = if ($s.EsPGS) { "PGS" } else { "Texto" }
+                $etiq = "$($f.Nombre)  —  pista $($s.Index) · $fmt"
+                if ($s.Title) { $etiq += " · «$($s.Title)»" }
+                $pistasUndSub += @{ Archivo = $f.Ruta; Id = $s.Index; Etiqueta = $etiq }
+            } else {
+                if (-not $idiomasSubs.Contains($c)) { $idiomasSubs[$c] = 0 }
+                $idiomasSubs[$c] = $idiomasSubs[$c] + 1
+            }
+        }
+    }
+    $casoDolbyDTS = "NO"
+    foreach ($k in $gruposScope.Keys) {
+        $porIdioma = @{}
+        foreach ($f in $gruposScope[$k]) {
+            foreach ($a in $f.Audios) {
+                $lng = ConvCanon $a.Lang $a.Title
+                if (-not $porIdioma.ContainsKey($lng)) { $porIdioma[$lng] = @{ DTS = $false; Dolby = $false; AC3 = $false } }
+                if ($a.Codec -match "dts") { $porIdioma[$lng].DTS = $true }
+                if ($a.Codec -match "^(ac3|eac3|truehd)$") { $porIdioma[$lng].Dolby = $true }
+                if ($a.Codec -match "^(ac3|eac3)$") { $porIdioma[$lng].AC3 = $true }
+            }
+        }
+        foreach ($lng in $porIdioma.Keys) {
+            $i = $porIdioma[$lng]
+            if ($i.DTS -and $i.Dolby) { $casoDolbyDTS = "SI" }
+            elseif ($i.DTS -and -not $i.AC3 -and $casoDolbyDTS -eq "NO") { $casoDolbyDTS = "CONV" }
+        }
+        if ($casoDolbyDTS -eq "SI") { break }
+    }
+    $ambiguosMap = [ordered]@{}
+    foreach ($k in $gruposScope.Keys) {
+        $combos = @{}
+        foreach ($f in $gruposScope[$k]) {
+            foreach ($s in $f.Subs) {
+                $c = ConvCanon $s.Lang $s.Title
+                $fmt = if ($s.EsPGS) { "PGS" } else { "Text" }
+                $kk = "$c|$fmt"
+                if (-not $combos.ContainsKey($kk)) { $combos[$kk] = @() }
+                $combos[$kk] += $s
+            }
+        }
+        foreach ($kk in $combos.Keys) {
+            $lista = $combos[$kk]
+            if ($lista.Count -ne 1) { continue }
+            $s = $lista[0]
+            $tieneSenal = $s.Forced -or ("$($s.Title)" -match "(?i)forced|forzado") -or ("$($s.Title)" -match "(?i)completos?|complete|full")
+            if (-not $tieneSenal -and -not $ambiguosMap.Contains($kk)) {
+                $parts = $kk -split "\|"
+                $fmtDisp = if ($parts[1] -eq "PGS") { "PGS" } else { "Texto" }
+                $ambiguosMap[$kk] = [PSCustomObject]@{ Cod = $parts[0]; Fmt = $parts[1]; Label = "$(NombreIdioma $parts[0]) · $fmtDisp" }
+            }
+        }
+    }
+    $script:subsAmbiguos = @($ambiguosMap.Values)
+    # Aplicación de tarjetas (idéntico criterio que Aplicar-Analisis, ámbito = $selScope)
+    if ($archivosDTS.Count -gt 0) {
+        $ui.cardDTS.Visibility = "Visible"; Set-Badge "bdgDTS" "DTS detectado en $($archivosDTS.Count) de $($selScope.Count) archivo(s)" "ok"
+    } else { $ui.cardDTS.Visibility = "Collapsed" }
+    switch ($casoDolbyDTS) {
+        "SI"   { $ui.cardDefAudio.Visibility = "Visible"; Set-Badge "bdgDefAudio" "Dolby y DTS conviven en el mismo idioma" "ok" }
+        "CONV" { $ui.cardDefAudio.Visibility = "Visible"; Set-Badge "bdgDefAudio" "aplicará si conviertes DTS a E-AC3" "warn" }
+        default { $ui.cardDefAudio.Visibility = "Collapsed" }
+    }
+    if ($pistasUndAudio.Count -gt 0) {
+        $ui.cardUndAudio.Visibility = "Visible"; Construir-FilasUnd $ui.panUndAudio $pistasUndAudio "Audio"
+        Set-Badge "bdgUndAudio" "$($pistasUndAudio.Count) pista(s) en $($archUndAudio.Keys.Count) archivo(s)" "warn"
+    } else { $ui.cardUndAudio.Visibility = "Collapsed"; $ui.panUndAudio.Children.Clear() }
+    if ($pistasUndSub.Count -gt 0) {
+        $ui.cardUndSub.Visibility = "Visible"; Construir-FilasUnd $ui.panUndSub $pistasUndSub "Sub"
+        Set-Badge "bdgUndSub" "$($pistasUndSub.Count) subtítulo(s) en $($archUndSub.Keys.Count) archivo(s)" "warn"
+    } else { $ui.cardUndSub.Visibility = "Collapsed"; $ui.panUndSub.Children.Clear() }
+    if ($idiomasSubs.Keys.Count -gt 0) {
+        $ui.cardFiltro.Visibility = "Visible"
+        $det = @($idiomasSubs.Keys | ForEach-Object { @{Cod=$_; Nom=(NombreIdioma $_); Count=$idiomasSubs[$_]} })
+        Reconstruir-ChipsIdiomas $det
+        $nota = if ($idiomasSubs.Keys.Count -gt 3) { " — más de 3: revisa el filtro" } else { "" }
+        Set-Badge "bdgFiltro" "$($idiomasSubs.Keys.Count) idioma(s): $(@($idiomasSubs.Keys | ForEach-Object { NombreIdioma $_ }) -join ', ')$nota" $(if ($idiomasSubs.Keys.Count -gt 3) { "warn" } else { "ok" })
+    } else { $ui.cardFiltro.Visibility = "Collapsed"; Reconstruir-ChipsIdiomas }
+    if (@($script:subsAmbiguos).Count -gt 0) {
+        $ui.cardSubsUnicos.Visibility = "Visible"; Set-Badge "bdgSubsUnicos" "$(@($script:subsAmbiguos).Count) sin definir" "warn"
+        Construir-FilasSubsUnicos $script:subsAmbiguos
+    } else { $ui.cardSubsUnicos.Visibility = "Collapsed"; $ui.panSubsUnicos.Children.Clear(); $script:subsUnicosRows = @() }
+    if ($archivosPGS.Count -gt 0) {
+        $ui.cardPGS.Visibility = "Visible"
+        $totPgs = 0; foreach ($f in $selScope) { $totPgs += @($f.Subs | Where-Object { $_.EsPGS }).Count }
+        Set-Badge "bdgPGS" "$totPgs pista(s) PGS en $($archivosPGS.Count) archivo(s)" "ok"
+    } else { $ui.cardPGS.Visibility = "Collapsed" }
+    $audioVacio = ($ui.cardDTS.Visibility -ne "Visible") -and ($ui.cardDefAudio.Visibility -ne "Visible") -and ($ui.cardUndAudio.Visibility -ne "Visible")
+    $ui.phAudio.Visibility = if ($audioVacio) { "Visible" } else { "Collapsed" }
+    $subsVacio = ($ui.cardUndSub.Visibility -ne "Visible") -and ($ui.cardFiltro.Visibility -ne "Visible") -and
+                 ($ui.cardSubsUnicos.Visibility -ne "Visible") -and ($ui.cardPGS.Visibility -ne "Visible")
+    $ui.phSubs.Visibility = if ($subsVacio) { "Visible" } else { "Collapsed" }
+}
+# Snapshot de las decisiones de audio/subs de la pestaña activa (lee las tarjetas actuales).
+function Snapshot-DecisionesTab {
+    $und = @{}
+    foreach ($r in @($script:undRows)) { $und["$($r.Archivo)|$($r.Id)|$($r.Tipo)"] = (Get-ComboValor $r.Combo) }
+    $su = @{}
+    foreach ($r in @($script:subsUnicosRows)) { $su["$($r.Cod)|$($r.Fmt)"] = $(if ($r.RbForzado.IsChecked) { "Forzado" } else { "Completo" }) }
+    @{
+        Dts = (Get-ChipValor "dts"); DefAudio = (Get-ChipValor "defAudio"); Filtro = (Get-ChipValor "filtro")
+        FiltroLangs = @($script:chipsIdiomas | Where-Object { $_.IsChecked } | ForEach-Object { "$($_.Tag)" })
+        ExtraerPGS = (Get-ChipValor "extraerPGS"); ConservarPGS = (Get-ChipValor "conservarPGS")
+        Und = $und; SubsUnicos = $su
+    }
+}
+# Aplica las decisiones guardadas sobre las tarjetas YA reconstruidas (Construir-Adaptacion antes).
+function Restore-DecisionesTab($d) {
+    if (-not $d) { return }
+    if ($d.Dts)          { Set-ChipValor "dts" $d.Dts }
+    if ($d.DefAudio)     { Set-ChipValor "defAudio" $d.DefAudio }
+    if ($d.ExtraerPGS)   { Set-ChipValor "extraerPGS" $d.ExtraerPGS }
+    if ($d.ConservarPGS) { Set-ChipValor "conservarPGS" $d.ConservarPGS }
+    if ($d.Filtro)       { Set-ChipValor "filtro" $d.Filtro; Actualizar-Filtro }
+    if ($d.Filtro -eq "PERSONALIZADA" -and $d.FiltroLangs) {
+        foreach ($tb in $script:chipsIdiomas) { $tb.IsChecked = (@($d.FiltroLangs) -contains "$($tb.Tag)") }
+    }
+    if ($d.Und) {
+        foreach ($r in @($script:undRows)) {
+            $k = "$($r.Archivo)|$($r.Id)|$($r.Tipo)"
+            if ($d.Und.ContainsKey($k) -and $null -ne $d.Und[$k]) { Set-ComboValor $r.Combo $d.Und[$k] }
+        }
+    }
+    if ($d.SubsUnicos) {
+        foreach ($r in @($script:subsUnicosRows)) {
+            $k = "$($r.Cod)|$($r.Fmt)"
+            if ($d.SubsUnicos.ContainsKey($k) -and $d.SubsUnicos[$k] -eq "Forzado") { $r.RbForzado.IsChecked = $true }
+        }
+    }
+}
+# Reconstruye las tarjetas de audio/subs para la pestaña activa y aplica sus decisiones guardadas.
+function Aplicar-TabActiva {
+    if ($script:tabProyActual -lt 0 -or $script:tabProyActual -ge @($script:tabsProy).Count) { return }
+    $tab = $script:tabsProy[$script:tabProyActual]
+    $nombres = @($tab.Archivos)
+    $scope = @($script:ultimoScan | Where-Object { $nombres -contains $_.Nombre })
+    Construir-Adaptacion $scope
+    Restore-DecisionesTab $tab.Decisiones
+}
+# Muestra/oculta la barra de pestañas según el modo de lote.
+function Actualizar-ModoLote {
+    if (-not $ui -or -not $ui.panProyTabs) { return }
+    $het = ((Get-ChipValor "modoLote") -eq "HETEROGENEO")
+    $visTabs = if ($het) { "Visible" } else { "Collapsed" }
+    foreach ($p in @($ui.panProyTabs, $ui.panProyTabsA, $ui.panProyTabsS)) { if ($p) { $p.Visibility = $visTabs } }
+    # Capturas: la tarjeta vive SIEMPRE en Proyecto (no se oculta). En heterogéneo el valor es por
+    # pestaña; en homogéneo es un único valor que se envía como NumCapturas global.
+    if ($het) { Reconstruir-TabsProy }
+    Update-FlechasTabsProy
+}
+# Registro del chip «modoLote» (aquí, ya con Actualizar-ModoLote definida: su callback se dispara
+# al fijar la opción por defecto durante la creación).
+Add-ChipGroup $ui.chModoLote "modoLote" @(
+    @{T="Mismo proyecto (temporada)"; V="HOMOGENEO"},
+    @{T="Cada archivo distinto"; V="HETEROGENEO"}
+) 0 { Actualizar-ModoLote }
+
 function Lanzar-Escaneo {
     $script:scanGen++
     Reset-Adaptacion
+    Actualizar-Procesado
     Actualizar-ListaRapida
     $carpeta = $ui.txtCarpeta.Text
     $script:ultimoScan = @()
@@ -2196,7 +2678,7 @@ function Aplicar-Sidebar {
     $col = $script:sidebarColapsado
     $ui.sidebar.Width = if ($col) { 72 } else { 216 }
     $visTxt = if ($col) { "Collapsed" } else { "Visible" }
-    foreach ($e in @($ui.lblSecMontaje, $ui.lblSecTorrent, $ui.lblPie)) { if ($e) { $e.Visibility = $visTxt } }
+    foreach ($e in @($ui.lblSecMontaje, $ui.lblSecTorrent, $ui.lblPie, $ui.lblVersion)) { if ($e) { $e.Visibility = $visTxt } }
     $ui.imgLogo.Visibility      = if (-not $col -and $script:logoCargado)      { "Visible" } else { "Collapsed" }
     $ui.panLogoTexto.Visibility = if (-not $col -and -not $script:logoCargado) { "Visible" } else { "Collapsed" }
     $padCol = [System.Windows.Thickness]::new(2, 10, 2, 10)
@@ -2205,7 +2687,10 @@ function Aplicar-Sidebar {
         if ($col) { $n.C.Content = $n.I; $n.C.HorizontalContentAlignment = "Center"; $n.C.FontSize = 18; $n.C.Padding = $padCol; $n.C.ToolTip = $n.L }
         else      { $n.C.Content = "$($n.I)   $($n.L)"; $n.C.HorizontalContentAlignment = "Left"; $n.C.FontSize = 13.5; $n.C.Padding = $padExp; $n.C.ToolTip = $null }
     }
-    $ui.btnColapsar.HorizontalAlignment = if ($col) { "Center" } else { "Left" }
+    # Colapsado: el ☰ ocupa las 2 columnas y se centra (la versión está oculta). Expandido: solo
+    # su columna derecha, con la versión a la izquierda.
+    [System.Windows.Controls.Grid]::SetColumnSpan($ui.btnColapsar, $(if ($col) { 2 } else { 1 }))
+    $ui.btnColapsar.HorizontalAlignment = if ($col) { "Center" } else { "Right" }
 }
 $ui.btnColapsar.Add_Click({ $script:sidebarColapsado = -not $script:sidebarColapsado; Aplicar-Sidebar })
 
@@ -2214,6 +2699,33 @@ $ui.btnExaminar.Add_Click({
     $dlg.Description = "Selecciona la carpeta con los vídeos a procesar"
     if ($ui.txtCarpeta.Text -and (Test-Path -LiteralPath $ui.txtCarpeta.Text)) { $dlg.SelectedPath = $ui.txtCarpeta.Text }
     if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $ui.txtCarpeta.Text = $dlg.SelectedPath }
+})
+
+# Quitar el sufijo «.procesado» a los originales de la carpeta para volver a procesarlos.
+$ui.btnQuitarProcesado.Add_Click({
+    $carpeta = "$($ui.txtCarpeta.Text)".Trim()
+    if (-not ($carpeta -and (Test-Path -LiteralPath $carpeta))) { return }
+    $procesados = @($script:archivosProcesado)
+    if ($procesados.Count -eq 0) { return }
+    $ok = Show-DialogoHDZ -Owner $win -Icono "♻️" -Titulo "Quitar «.procesado»" `
+        -Mensaje "Se quitará el sufijo «.procesado» de $($procesados.Count) archivo(s), devolviéndoles su nombre original para poder trabajar con ellos de nuevo.`n`n¿Continuar?" `
+        -BotonSi "Sí, quitar sufijo" -BotonNo "Cancelar"
+    if (-not $ok) { return }
+    $restaurados = 0; $omitidos = 0
+    foreach ($f in $procesados) {
+        $nuevo = $f.Name -replace '\.procesado$', ''
+        if ($nuevo -eq $f.Name) { continue }
+        $destino = Join-Path $f.DirectoryName $nuevo
+        if (Test-Path -LiteralPath $destino) { $omitidos++; continue }   # ya existe el original: no se pisa
+        try { Rename-Item -LiteralPath $f.FullName -NewName $nuevo -ErrorAction Stop; $restaurados++ }
+        catch { $omitidos++ }
+    }
+    if ($omitidos -gt 0) {
+        Set-Estado "Restaurados $restaurados archivo(s). $omitidos no se pudieron (ya existía un archivo con el nombre original)." "warn"
+    } else {
+        Set-Estado "Restaurados $restaurados archivo(s): listos para procesar." "ok"
+    }
+    Lanzar-Escaneo   # re-escanea: los vídeos restaurados ya aparecen en la lista
 })
 # Carpetas de salida (rama de montaje): selectores de carpeta
 $ui.btnSalidaArchivo.Add_Click({
@@ -2917,7 +3429,7 @@ function Construir-Capturas($rutas) {
 }
 
 # Carga un .torrent: localiza vídeo, mediainfo, specs, capturas, prerellena campos
-function Cargar-TorrentParaSubir($rutaTorrent, $videoHint = $null) {
+function Cargar-TorrentParaSubir($rutaTorrent, $videoHint = $null, $origenHint = "", $capturasHint = @()) {
     $ui.txtTorrentSubir.Text = $rutaTorrent
     $nombre = Get-NombreTorrent $rutaTorrent
     if (-not $nombre) {
@@ -2962,22 +3474,29 @@ function Cargar-TorrentParaSubir($rutaTorrent, $videoHint = $null) {
         $ui.upEpisodio.Text = if ($Matches[2]) { "$([int]$Matches[2])" } else { "0" }   # sin episodio = pack
     }
 
-    # Capturas: las _cap_*.jpg de este título. El montaje las deja en la CARPETA DE TRABAJO (no se
-    # mueven aunque el MKV vaya a otra carpeta de salida), así que buscamos en varias ubicaciones:
-    # junto al vídeo, junto al .torrent, en la carpeta de trabajo y en la carpeta de salida del vídeo.
+    # Capturas: las _cap_*.jpg de este título. El montaje las deja en la CARPETA DE ORIGEN (no se
+    # mueven aunque el MKV vaya a otra carpeta de salida).
     $baseT = [System.IO.Path]::GetFileNameWithoutExtension($nombre)
     $baseEsc = [regex]::Escape($baseT)
-    $dirs = @(
-        $(if ($video) { Split-Path $video -Parent }),
-        $(Split-Path $rutaTorrent -Parent),
-        "$($ui.txtCarpeta.Text)".Trim(),
-        "$($ui.txtSalidaArchivo.Text)".Trim()
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
-    # 1) Por título exacto, en todas las carpetas candidatas.
-    $caps = @($dirs | ForEach-Object {
-        Get-ChildItem -LiteralPath $_ -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Extension -match "(?i)^\.(jpg|jpeg|png)$" -and $_.BaseName -match "(?i)^$baseEsc.*_cap_\d+$" }
-    } | Sort-Object FullName -Unique | ForEach-Object { $_.FullName })
+    # 0) Si el motor nos dio las rutas EXACTAS de las capturas (al procesar), las usamos tal cual.
+    #    Es lo más fiable: funciona aunque el MKV se haya movido, tras reabrir el programa, y en
+    #    packs donde la captura lleva el nombre del episodio y no el del pack.
+    $caps = @(@($capturasHint) | Where-Object { $_ -and (Test-Path -LiteralPath "$_") } | Select-Object -Unique)
+    # 1) Si no, buscamos por título exacto en todas las carpetas candidatas (incluida la de origen
+    #    que reporta el motor y la carpeta de trabajo/salida de la interfaz).
+    if ($caps.Count -eq 0) {
+        $dirs = @(
+            "$origenHint".Trim(),
+            $(if ($video) { Split-Path $video -Parent }),
+            $(Split-Path $rutaTorrent -Parent),
+            "$($ui.txtCarpeta.Text)".Trim(),
+            "$($ui.txtSalidaArchivo.Text)".Trim()
+        ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+        $caps = @($dirs | ForEach-Object {
+            Get-ChildItem -LiteralPath $_ -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Extension -match "(?i)^\.(jpg|jpeg|png)$" -and $_.BaseName -match "(?i)^$baseEsc.*_cap_\d+$" }
+        } | Sort-Object FullName -Unique | ForEach-Object { $_.FullName })
+    }
     # 2) Respaldo: cualquier _cap_ (solo en la carpeta del vídeo/torrent, para no mezclar títulos).
     if ($caps.Count -eq 0) {
         $dirPrinc = if ($video) { Split-Path $video -Parent } else { Split-Path $rutaTorrent -Parent }
@@ -3157,10 +3676,10 @@ function Init-Tabs {
 }
 # Añade una subida automáticamente (al ir terminando el montaje cada vídeo): usa la pestaña actual
 # si está vacía, si no crea una nueva, y carga el torrent recién creado con su vídeo y capturas.
-function Anadir-SubidaAuto($torrent, $video) {
+function Anadir-SubidaAuto($torrent, $video, $origen = "", $capturas = @()) {
     $vacia = [string]::IsNullOrWhiteSpace($ui.txtTorrentSubir.Text) -and [string]::IsNullOrWhiteSpace($ui.upTitulo.Text)
     if (-not $vacia) { Nueva-Tab }
-    Cargar-TorrentParaSubir $torrent $(if ($video -and (Test-Path -LiteralPath $video)) { $video } else { $null })
+    Cargar-TorrentParaSubir $torrent $(if ($video -and (Test-Path -LiteralPath $video)) { $video } else { $null }) $origen @($capturas)
     Construir-TabBar
     Set-Estado "Subida añadida automáticamente: $(Split-Path $torrent -Leaf). Está en «Torrent y subida»." "ok"
 }
@@ -3169,6 +3688,15 @@ $ui.btnTabIzq.Add_Click({ $ui.scrTabs.ScrollToHorizontalOffset([Math]::Max(0, $u
 $ui.btnTabDer.Add_Click({ $ui.scrTabs.ScrollToHorizontalOffset($ui.scrTabs.HorizontalOffset + 240) })
 $ui.scrTabs.Add_SizeChanged({ Update-FlechasTabs })
 $ui.panTabsSubida.Add_SizeChanged({ Update-FlechasTabs })
+# Flechas de las pestañas de PROYECTO/AUDIO/SUBS (modo heterogéneo) — las 3 barras
+$ui.btnTabProyIzq.Add_Click({ $ui.scrTabsProy.ScrollToHorizontalOffset([Math]::Max(0, $ui.scrTabsProy.HorizontalOffset - 240)) })
+$ui.btnTabProyDer.Add_Click({ $ui.scrTabsProy.ScrollToHorizontalOffset($ui.scrTabsProy.HorizontalOffset + 240) })
+$ui.btnTabProyAIzq.Add_Click({ $ui.scrTabsProyA.ScrollToHorizontalOffset([Math]::Max(0, $ui.scrTabsProyA.HorizontalOffset - 240)) })
+$ui.btnTabProyADer.Add_Click({ $ui.scrTabsProyA.ScrollToHorizontalOffset($ui.scrTabsProyA.HorizontalOffset + 240) })
+$ui.btnTabProySIzq.Add_Click({ $ui.scrTabsProyS.ScrollToHorizontalOffset([Math]::Max(0, $ui.scrTabsProyS.HorizontalOffset - 240)) })
+$ui.btnTabProySDer.Add_Click({ $ui.scrTabsProyS.ScrollToHorizontalOffset($ui.scrTabsProyS.HorizontalOffset + 240) })
+foreach ($scr in @($ui.scrTabsProy, $ui.scrTabsProyA, $ui.scrTabsProyS)) { $scr.Add_SizeChanged({ Update-FlechasTabsProy }) }
+foreach ($pan in @($ui.panTabsProy, $ui.panTabsProyA, $ui.panTabsProyS)) { $pan.Add_SizeChanged({ Update-FlechasTabsProy }) }
 # Asas de redimensión de los campos de texto (arrastrar la esquina cambia el alto).
 # Acumulamos sobre el Height actual (no ActualHeight) para que el arrastre sea estable.
 $ui.gripDesc.Add_DragDelta({ param($s, $e)
@@ -3753,43 +4281,19 @@ function Guardar-Ajustes {
             if ($prev -and -not [string]::IsNullOrWhiteSpace("$($prev.$prevName)")) { return "$($prev.$prevName)" }
             return $u
         }
-        $marcados = @($script:chipsIdiomas | Where-Object { $_.IsChecked } | ForEach-Object { "$($_.Tag)" })
+        # Solo se PERSISTE la configuración de la pestaña «Ajustes / claves» (credenciales, host de
+        # imágenes, firma) más el marcador interno de versión descartada. Los datos del PROYECTO
+        # (carpeta, título, año, opciones de procesado, carpetas de salida…) NO se guardan: al
+        # reabrir el programa todo arranca en blanco, sin memoria del proyecto anterior.
         $aj = [ordered]@{
             Version        = 2
-            Carpeta        = $ui.txtCarpeta.Text
             TrackerUrl     = & $keep $ui.cfgTrackerUrl.Text   "TrackerUrl"
             TrackerToken   = & $keep $ui.cfgTrackerToken.Text "TrackerToken"
             HostImg        = ChipPersist "hostImg"
             ImgbbKey       = & $keep $ui.cfgImgbbKey.Text "ImgbbKey"
             TmdbKey        = & $keep $ui.cfgTmdbKey.Text  "TmdbKey"
             Firma          = $(if ($script:firmaSel) { Split-Path $script:firmaSel -Leaf } else { "" })
-            ModoLote       = ChipPersist "modoLote"
-            Capturas       = ChipPersist "capturas"
-            Originales     = ChipPersist "originales"
-            Sufijo         = ChipPersist "sufijo"
-            Torrent        = ChipPersist "torrent"
             Announce       = & $keep $ui.txtAnnounce.Text "Announce"
-            SalidaArchivo  = $ui.txtSalidaArchivo.Text
-            SalidaTorrent  = $ui.txtSalidaTorrent.Text
-            Reprocesar     = ChipPersist "reprocesar"
-            ProyectoOn     = [bool]$ui.swProyecto.IsChecked
-            Titulo         = $ui.txtTitulo.Text
-            Ano            = $ui.txtAno.Text
-            Serie          = [bool]$ui.swSerie.IsChecked
-            Origen         = ChipPersist "origen"
-            WebTipo        = ChipPersist "webTipo"
-            Plataforma     = $ui.cmbPlataforma.SelectedIndex
-            PlataformaOtra = $ui.txtPlataformaOtra.Text
-            Formato        = $ui.cmbFormato.SelectedIndex
-            FormatoOtro    = $ui.txtFormatoOtro.Text
-            Etiquetas      = $ui.txtEtiquetas.Text
-            AplicarTodos   = [bool]$ui.swAplicarTodos.IsChecked
-            DTS            = ChipPersist "dts"
-            DefAudio       = ChipPersist "defAudio"
-            Filtro         = ChipPersist "filtro"
-            IdiomasMarcados= $marcados
-            ExtraerPGS     = ChipPersist "extraerPGS"
-            ConservarPGS   = ChipPersist "conservarPGS"
             UltimaVersionDescartada = $script:ajusteVerDescartada
         }
         # Defensa 3: escritura ATÓMICA con respaldo. Escribimos a un temporal, guardamos el
@@ -3823,44 +4327,17 @@ function Restaurar-Ajustes {
             return $v
         }
         $chip = { param($n, $v) if ("$v" -eq "ASK") { Set-ChipValor $n $null } elseif ($null -ne $v) { Set-ChipValor $n $v } }
-        if ($aj.Carpeta) { $ui.txtCarpeta.Text = "$($aj.Carpeta)" }
+        # Solo se RESTAURA la configuración de «Ajustes / claves» (credenciales, host de imágenes,
+        # firma). Los datos del PROYECTO no se restauran: cada apertura empieza en blanco.
         $vTrackerUrl   = & $rescatar "TrackerUrl";   if ($vTrackerUrl)   { $ui.cfgTrackerUrl.Text   = $vTrackerUrl }
         $vTrackerToken = & $rescatar "TrackerToken"; if ($vTrackerToken) { $ui.cfgTrackerToken.Text = $vTrackerToken }
         $vImgbbKey     = & $rescatar "ImgbbKey";     if ($vImgbbKey)     { $ui.cfgImgbbKey.Text     = $vImgbbKey }
         $vTmdbKey      = & $rescatar "TmdbKey";      if ($vTmdbKey)      { $ui.cfgTmdbKey.Text      = $vTmdbKey }
         if ($aj.Firma)        { $script:firmaSel = Join-Path $rutaFirmas "$($aj.Firma)" }
         & $chip "hostImg" $aj.HostImg
-        & $chip "modoLote"   $aj.ModoLote
-        & $chip "capturas"   $aj.Capturas
-        & $chip "originales" $aj.Originales
-        & $chip "sufijo"     $aj.Sufijo
-        & $chip "torrent"    $aj.Torrent
         $vAnnounce = & $rescatar "Announce"; if ($vAnnounce) { $ui.txtAnnounce.Text = $vAnnounce }
-        if ($aj.SalidaArchivo) { $ui.txtSalidaArchivo.Text = "$($aj.SalidaArchivo)" }
-        if ($aj.SalidaTorrent) { $ui.txtSalidaTorrent.Text = "$($aj.SalidaTorrent)" }
-        & $chip "reprocesar" $aj.Reprocesar
-        $ui.swProyecto.IsChecked = $true   # los datos de proyecto van siempre (sin prompts en consola)
-        $ui.txtTitulo.Text = "$($aj.Titulo)"
-        $ui.txtAno.Text    = "$($aj.Ano)"
-        $ui.swSerie.IsChecked = [bool]$aj.Serie
-        & $chip "origen"  $aj.Origen
-        & $chip "webTipo" $aj.WebTipo
-        if ($null -ne $aj.Plataforma -and [int]$aj.Plataforma -ge 0 -and [int]$aj.Plataforma -lt $ui.cmbPlataforma.Items.Count) { $ui.cmbPlataforma.SelectedIndex = [int]$aj.Plataforma }
-        $ui.txtPlataformaOtra.Text = "$($aj.PlataformaOtra)"
-        if ($null -ne $aj.Formato -and [int]$aj.Formato -ge 0 -and [int]$aj.Formato -lt $ui.cmbFormato.Items.Count) { $ui.cmbFormato.SelectedIndex = [int]$aj.Formato }
-        $ui.txtFormatoOtro.Text = "$($aj.FormatoOtro)"
-        $ui.txtEtiquetas.Text   = "$($aj.Etiquetas)"
+        $ui.swProyecto.IsChecked = $true       # los datos de proyecto van siempre (sin prompts en consola)
         $ui.swAplicarTodos.IsChecked = $true   # aplicar a todos en heterogéneo (sin preguntar por archivo)
-        & $chip "dts"      $aj.DTS
-        & $chip "defAudio" $aj.DefAudio
-        & $chip "filtro" $aj.Filtro
-        if ($aj.IdiomasMarcados) {
-            foreach ($tb in $script:chipsIdiomas) {
-                if (@($aj.IdiomasMarcados) -contains "$($tb.Tag)") { $tb.IsChecked = $true }
-            }
-        }
-        & $chip "extraerPGS"   $aj.ExtraerPGS
-        & $chip "conservarPGS" $aj.ConservarPGS
     } catch {}
 }
 
@@ -3877,7 +4354,20 @@ $ui.btnIniciar.Add_Click({
         Set-Estado "Selecciona una carpeta válida con los vídeos." "error"
         return
     }
-    if ([bool]$ui.swProyecto.IsChecked -and [string]::IsNullOrWhiteSpace($ui.txtTitulo.Text)) {
+    if ((Get-ChipValor "modoLote") -eq "HETEROGENEO" -and @($script:tabsProy).Count -gt 0) {
+        # En modo por archivo, cada pestaña (película) necesita su título. Validamos todas.
+        if ($script:tabProyActual -ge 0 -and $script:tabProyActual -lt @($script:tabsProy).Count) {
+            $script:tabsProy[$script:tabProyActual].Estado = Snapshot-Proyecto
+        }
+        for ($i = 0; $i -lt @($script:tabsProy).Count; $i++) {
+            if ([string]::IsNullOrWhiteSpace("$($script:tabsProy[$i].Estado.Titulo)")) {
+                $ui.navProyecto.IsChecked = $true
+                Cambiar-TabProy $i
+                Set-Estado "La película «$($script:tabsProy[$i].Principal)» no tiene título. Rellénalo en su pestaña." "error"
+                return
+            }
+        }
+    } elseif ([bool]$ui.swProyecto.IsChecked -and [string]::IsNullOrWhiteSpace($ui.txtTitulo.Text)) {
         Set-Estado "Has activado los datos del proyecto: el título no puede estar vacío." "error"
         $ui.navProyecto.IsChecked = $true
         return
@@ -3905,7 +4395,7 @@ $ui.btnIniciar.Add_Click({
     }
     $v = Get-ChipValor "modoLote";     if ($null -ne $v) { $cfg.ModoLote = $v }
     $v = Get-ChipValor "reprocesar";   if ($null -ne $v) { $cfg.ReprocesarHDZ = $v }
-    $v = Get-ChipValor "capturas";     if ($null -ne $v) { $cfg.NumCapturas = [int]$v }
+    $v = Get-ChipValor "capturasProy"; if ($null -ne $v) { $cfg.NumCapturas = [int]$v }
     $v = Get-ChipValor "originales";   if ($null -ne $v) { $cfg.BorrarOriginales = $v }
     $v = Get-ChipValor "sufijo";       if ($null -ne $v) { $cfg.SufijoHDZ = $v }
     $v = Get-ChipValor "torrent";      if ($null -ne $v) { $cfg.ModoTorrent = $v }
@@ -3960,6 +4450,70 @@ $ui.btnIniciar.Add_Click({
         }
     }
 
+    # Identidad POR ARCHIVO (modo «Cada archivo distinto»): mapa nombreArchivo -> datos de proyecto.
+    # El motor (Get-DatosProyecto) lo consulta por nombre de archivo y aplica la identidad de cada peli.
+    if ((Get-ChipValor "modoLote") -eq "HETEROGENEO" -and @($script:tabsProy).Count -gt 0) {
+        if ($script:tabProyActual -ge 0 -and $script:tabProyActual -lt @($script:tabsProy).Count) {
+            $script:tabsProy[$script:tabProyActual].Estado = Snapshot-Proyecto
+            $script:tabsProy[$script:tabProyActual].Decisiones = Snapshot-DecisionesTab
+        }
+        $mapaProy = [ordered]@{}
+        foreach ($tb in @($script:tabsProy)) {
+            $e = $tb.Estado
+            $esWebE = ("$($e.Origen)" -ne "FISICO")
+            $platE = if ($esWebE) {
+                if (-not [string]::IsNullOrWhiteSpace($e.PlatOtra)) { "$($e.PlatOtra)".Trim() }
+                elseif ([int]$e.PlatIdx -ge 0 -and [int]$e.PlatIdx -lt $ui.cmbPlataforma.Items.Count) { Get-CodigoPlataforma $ui.cmbPlataforma.Items[[int]$e.PlatIdx] }
+                else { "" }
+            } else {
+                if (-not [string]::IsNullOrWhiteSpace($e.FmtOtro)) { "$($e.FmtOtro)".Trim() }
+                elseif ([int]$e.FmtIdx -ge 0 -and [int]$e.FmtIdx -lt $ui.cmbFormato.Items.Count) { "$($ui.cmbFormato.Items[[int]$e.FmtIdx])" }
+                else { "" }
+            }
+            $datos = [ordered]@{
+                Titulo            = "$($e.Titulo)".Trim()
+                Ano               = "$($e.Ano)".Trim()
+                EsSerie           = [bool]$e.EsSerie
+                TipoOrigen        = "$($e.Origen)"
+                WebTipo           = "$($e.WebTipo)"
+                PlataformaFormato = $platE
+                EtiquetasExtra    = if ($esWebE) { "" } else { "$($e.Etiquetas)".Trim() }
+                NumCapturas       = $(if ($null -ne $e.Capturas) { [int]$e.Capturas } else { -1 })
+            }
+            foreach ($arch in @($tb.Archivos)) { $mapaProy[$arch] = $datos }
+        }
+        if ($mapaProy.Count -gt 0) { $cfg.ProyectoPorArchivo = $mapaProy }
+
+        # Decisiones de audio/subtítulos POR ARCHIVO (DTS, audio por defecto, filtro, PGS) + pistas
+        # und (recopiladas de TODAS las pestañas) + subs únicos por archivo. Reemplazan a las globales.
+        $mapaDec = [ordered]@{}; $undTodos = @(); $mapaSU = [ordered]@{}
+        foreach ($tb in @($script:tabsProy)) {
+            $d = $tb.Decisiones
+            if (-not $d) { continue }
+            $filtroEf = if ($d.Filtro -eq "PERSONALIZADA") { @($d.FiltroLangs) } else { $d.Filtro }
+            $dec = [ordered]@{
+                Dts = $d.Dts; DefAudio = $d.DefAudio; Filtro = $filtroEf
+                ExtraerPGS = [bool]$d.ExtraerPGS; ConservarPGS = $d.ConservarPGS
+            }
+            foreach ($arch in @($tb.Archivos)) { $mapaDec[$arch] = $dec }
+            if ($d.Und) {
+                foreach ($k in $d.Und.Keys) {
+                    if ($null -eq $d.Und[$k]) { continue }
+                    $p = "$k" -split "\|"
+                    if ($p.Count -ge 3) { $undTodos += [ordered]@{ Archivo = $p[0]; Id = $p[1]; Tipo = $p[2]; Idioma = $d.Und[$k] } }
+                }
+            }
+            if ($d.SubsUnicos -and $d.SubsUnicos.Count -gt 0) {
+                $perArch = [ordered]@{}
+                foreach ($kk in $d.SubsUnicos.Keys) { $perArch["$kk"] = $d.SubsUnicos[$kk] }
+                foreach ($arch in @($tb.Archivos)) { $mapaSU[$arch] = $perArch }
+            }
+        }
+        if ($mapaDec.Count -gt 0) { $cfg.DecisionesPorArchivo = $mapaDec }
+        if ($undTodos.Count -gt 0) { $cfg.IdiomasUndPistas = @($undTodos) }          # reemplaza al global
+        if ($mapaSU.Count -gt 0)  { $cfg.SubsUnicosPorArchivo = $mapaSU }
+    }
+
     try {
         $marca = Get-Date -Format "yyyyMMdd_HHmmss"
         $cfgPath = Join-Path $env:TEMP "hdz_gui_config_$marca.json"
@@ -4009,6 +4563,7 @@ Set-Location -LiteralPath '@@CARPETA@@'
 $env:HDZ_CONFIG = '@@CFG@@'
 $env:HDZ_PROGRESS = '@@PROG@@'
 $env:HDZ_RESULTS = '@@RES@@'
+$env:HDZ_CONSOLE_FLAG = '@@FLAG@@'
 & '@@SCRIPT@@'
 '@
         $launcher = $plantilla `
@@ -4047,6 +4602,17 @@ function Iniciar-SondeoProgreso {
     $t = New-Object System.Windows.Threading.DispatcherTimer
     $t.Interval = [TimeSpan]::FromMilliseconds(350)
     $t.Add_Tick({
+        # ¿El motor abrió la consola por su cuenta (porque necesita una respuesta)? La bandera
+        # pasa a "1" sin que el usuario tocara el botón → reflejarlo en la UI para no desincronizar.
+        if ($script:rutaFlagCons -and -not $script:consolaVisible -and (Test-Path -LiteralPath $script:rutaFlagCons)) {
+            try {
+                if ((Get-Content -LiteralPath $script:rutaFlagCons -Raw -ErrorAction Stop).Trim() -eq "1") {
+                    $script:consolaVisible = $true
+                    Set-ContenidoConsola $true
+                    Set-Estado "⚠  El montaje pide una respuesta: la consola se ha abierto. Contéstale para continuar." "warn"
+                }
+            } catch {}
+        }
         # Leer progreso
         if ($script:rutaProgreso -and (Test-Path -LiteralPath $script:rutaProgreso)) {
             try {
@@ -4083,7 +4649,7 @@ function Iniciar-SondeoProgreso {
                     $script:resultadosLeidos++
                     $r = $linea | ConvertFrom-Json
                     if ($r -and $r.torrent -and (Test-Path -LiteralPath $r.torrent)) {
-                        Anadir-SubidaAuto $r.torrent "$($r.video)"
+                        Anadir-SubidaAuto $r.torrent "$($r.video)" "$($r.origen)" @($r.capturas)
                     }
                 }
             } catch {}
@@ -4154,6 +4720,7 @@ function Reset-Todo {
     $ui.swSerie.IsChecked = $false
     $ui.swAplicarTodos.IsChecked = $true
     $ui.txtTitulo.Text = ""; $ui.txtAno.Text = ""
+    $script:tituloAutoVal = ""; $script:anoAutoVal = ""; $script:serieAutoVal = $null; $script:carpetaIdentificada = ""
     $ui.txtPlataformaOtra.Text = ""; $ui.txtFormatoOtro.Text = ""; $ui.txtEtiquetas.Text = ""
     if ($ui.cmbPlataforma.Items.Count -gt 0) { $ui.cmbPlataforma.SelectedIndex = 0 }
     if ($ui.cmbFormato.Items.Count -gt 0) { $ui.cmbFormato.SelectedIndex = 0 }
@@ -4200,11 +4767,121 @@ function Reset-Todo {
     Set-Estado "Programa reiniciado. Elige una carpeta de vídeos para empezar."
 }
 
+# =========================================================================
+# DIÁLOGO MODAL CON EL ESTILO DE LA GUI (sustituye a los MessageBox nativos)
+# =========================================================================
+# Devuelve $true si el usuario confirma (Sí / botón principal), $false si cancela.
+# Si -BotonNo queda vacío, se muestra un único botón (modo "aceptar").
+function Show-DialogoHDZ {
+    param(
+        [string]$Titulo,
+        [string]$Mensaje,
+        [string]$Icono   = "",
+        [string]$BotonSi = "Sí",
+        [string]$BotonNo = "No",
+        [System.Windows.Window]$Owner = $null
+    )
+    $soloOk = [string]::IsNullOrEmpty($BotonNo)
+    $xamlDlg = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        SizeToContent="Height" Width="470" ResizeMode="NoResize" ShowInTaskbar="False"
+        FontFamily="Segoe UI" FontSize="13" UseLayoutRounding="True" SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
+  <Window.Resources>
+    <Style x:Key="P" TargetType="Button">
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="FontSize" Value="13.5"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" Background="#D92B2B" CornerRadius="9" Padding="22,10">
+              <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Background" Value="#EF4444"/></Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="bd" Property="Background" Value="#A81E1E"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="G" TargetType="Button">
+      <Setter Property="Foreground" Value="#C8C8CE"/>
+      <Setter Property="FontSize" Value="13.5"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" Background="#1A1A1F" BorderBrush="#2E2E35" BorderThickness="1" CornerRadius="9" Padding="20,10">
+              <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="bd" Property="BorderBrush" Value="#D92B2B"/>
+                <Setter Property="Foreground" Value="White"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
+  <Border Background="#131316" BorderBrush="#2E2E35" BorderThickness="1" CornerRadius="14" Margin="16">
+    <Border.Effect><DropShadowEffect BlurRadius="30" ShadowDepth="7" Opacity="0.55" Color="#000000"/></Border.Effect>
+    <StackPanel Margin="28,24,28,22">
+      <DockPanel x:Name="barra" LastChildFill="True" Margin="0,0,0,16">
+        <TextBlock x:Name="lblIcono" FontSize="22" VerticalAlignment="Center" Margin="0,0,12,0" DockPanel.Dock="Left"/>
+        <TextBlock x:Name="lblTitulo" Foreground="#EDEDEF" FontSize="16.5" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap"/>
+      </DockPanel>
+      <TextBlock x:Name="lblCuerpo" Foreground="#9C9CA8" FontSize="13.5" TextWrapping="Wrap" LineHeight="21" Margin="0,0,0,24"/>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button x:Name="btnNo" Style="{StaticResource G}" Margin="0,0,10,0"/>
+        <Button x:Name="btnSi" Style="{StaticResource P}"/>
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</Window>
+'@
+    $dlg = [Windows.Markup.XamlReader]::Parse($xamlDlg)
+    $g = @{}
+    foreach ($n in @("barra","lblIcono","lblTitulo","lblCuerpo","btnSi","btnNo")) { $g[$n] = $dlg.FindName($n) }
+    $g.lblIcono.Text  = $Icono
+    if (-not $Icono) { $g.lblIcono.Visibility = "Collapsed" }
+    $g.lblTitulo.Text = $Titulo
+    $g.lblCuerpo.Text = $Mensaje
+    $g.btnSi.Content  = $BotonSi
+    $g.btnSi.IsDefault = $true
+    if ($soloOk) {
+        $g.btnNo.Visibility = "Collapsed"
+    } else {
+        $g.btnNo.Content = $BotonNo
+        $g.btnNo.IsCancel = $true
+        $g.btnNo.Add_Click({ $dlg.DialogResult = $false }.GetNewClosure())
+    }
+    $g.btnSi.Add_Click({ $dlg.DialogResult = $true }.GetNewClosure())
+    # Permitir arrastrar la ventana sin barra de título (clic sobre la cabecera).
+    $g.barra.Add_MouseLeftButtonDown({ try { $dlg.DragMove() } catch {} }.GetNewClosure())
+    if ($Owner) {
+        $dlg.Owner = $Owner
+        $dlg.WindowStartupLocation = "CenterOwner"
+    } else {
+        $dlg.WindowStartupLocation = "CenterScreen"
+    }
+    $res = $dlg.ShowDialog()
+    return [bool]$res
+}
+
 $ui.btnReset.Add_Click({
-    $r = [System.Windows.MessageBox]::Show(
-        "Se borrará la carpeta seleccionada y todas las opciones marcadas, dejando el programa como recién abierto.`n`n(No se borra ningún archivo del disco ni tus credenciales de Ajustes.)`n`n¿Continuar?",
-        "Empezar de Zero", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
-    if ($r -eq [System.Windows.MessageBoxResult]::Yes) { Reset-Todo }
+    $ok = Show-DialogoHDZ -Owner $win -Icono "🗑" -Titulo "Empezar de Zero" `
+        -Mensaje "Se borrará la carpeta seleccionada y todas las opciones marcadas, dejando el programa como recién abierto.`n`nNo se borra ningún archivo del disco ni tus credenciales de Ajustes.`n`n¿Continuar?" `
+        -BotonSi "Sí, empezar de Zero" -BotonNo "Cancelar"
+    if ($ok) { Reset-Todo }
 })
 
 # =========================================================================
@@ -4256,6 +4933,7 @@ function Get-VersionLocal {
     if (Test-Path -LiteralPath $vf) { try { return (Get-Content -LiteralPath $vf -Raw).Trim() } catch {} }
     return $script:HDZVersion
 }
+if ($ui.lblVersion) { $ui.lblVersion.Text = "v$(Get-VersionLocal)" }
 $script:updTimer = $null; $script:updSync = $null; $script:updPS = $null; $script:updAsync = $null
 function Iniciar-ChequeoActualizacion {
     if ($script:modoTest) { return }
@@ -4301,8 +4979,9 @@ function Iniciar-ChequeoActualizacion {
         $msg = "Hay una versión nueva de HDZ Studio: $verRemota (tienes $verLocal)."
         if ("$($j.notas)") { $msg += "`n`nNovedades:`n$($j.notas)" }
         $msg += "`n`n¿Actualizar ahora? El programa se cerrará y se reabrirá ya actualizado."
-        $r = [System.Windows.MessageBox]::Show($win, $msg, "Actualización disponible", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Information)
-        if ($r -eq [System.Windows.MessageBoxResult]::Yes) {
+        $r = Show-DialogoHDZ -Owner $win -Icono "⬇️" -Titulo "Actualización disponible" -Mensaje $msg `
+            -BotonSi "Actualizar ahora" -BotonNo "Ahora no"
+        if ($r) {
             $upd = Join-Path $PSScriptRoot "instalacion\Actualizar-HDZStudio.ps1"
             if (Test-Path -LiteralPath $upd) {
                 Start-Process "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$upd`"")
@@ -4371,6 +5050,7 @@ if ([string]::IsNullOrWhiteSpace($ui.cfgTrackerUrl.Text)) { $ui.cfgTrackerUrl.Te
 Actualizar-Proyecto
 Actualizar-Filtro
 Actualizar-Torrent
+Actualizar-ModoLote
 Actualizar-TipoCategoria
 Construir-Firmas
 if ([string]::IsNullOrWhiteSpace($ui.upDescripcion.Text)) { Reset-Descripcion }
@@ -4488,6 +5168,58 @@ if ($script:modoTest) {
         $b1.RaiseEvent($ev)
         Write-Host "TEST_LOGO: logoSel='$($script:logoSel)' grosor[1]=$($script:logoBordes[1].Borde.BorderThickness.Left) grosor[0]=$($script:logoBordes[0].Borde.BorderThickness.Left)"
     }
+    # Gancho de test: modo heterogéneo con 3 películas → pestañas de proyecto por archivo
+    if ($env:HDZ_GUI_TEST_HET) {
+        $nM="The.Matrix.1999.2160p.NF.WEB-DL.mkv"; $nF="Friends.S01.1994.1080p.HMAX.WEB-DL.mkv"; $nI="Interstellar.2014.1080p.AMZN.WEB-DL.mkv"
+        # Análisis simulado: Matrix con DTS + sub und; Friends con audio und + PGS; Interstellar 4 idiomas de subs.
+        $script:ultimoScan = @(
+            @{ Nombre=$nM; Ruta="C:\v\$nM"; Error=$null; Video=@{Codec="hevc";Height=2160;EsDV=$false;EsHDR=$true}
+               Audios=@(@{Index=0;Codec="dts";Profile="MA";Lang="eng";Title="";Forced=$false}, @{Index=1;Codec="eac3";Profile="";Lang="spa";Title="";Forced=$false})
+               Subs=@(@{Index=2;Codec="subrip";Lang="und";Title="";Forced=$false;EsPGS=$false}) }
+            @{ Nombre=$nF; Ruta="C:\v\$nF"; Error=$null; Video=@{Codec="h264";Height=1080;EsDV=$false;EsHDR=$false}
+               Audios=@(@{Index=0;Codec="aac";Profile="";Lang="und";Title="";Forced=$false})
+               Subs=@(@{Index=1;Codec="hdmv_pgs_subtitle";Lang="spa";Title="";Forced=$false;EsPGS=$true}) }
+            @{ Nombre=$nI; Ruta="C:\v\$nI"; Error=$null; Video=@{Codec="hevc";Height=1080;EsDV=$false;EsHDR=$false}
+               Audios=@(@{Index=0;Codec="eac3";Profile="";Lang="eng";Title="";Forced=$false})
+               Subs=@(@{Index=1;Codec="subrip";Lang="fre";Title="";Forced=$false;EsPGS=$false}, @{Index=2;Codec="subrip";Lang="ger";Title="";Forced=$false;EsPGS=$false}, @{Index=3;Codec="subrip";Lang="ita";Title="";Forced=$false;EsPGS=$false}, @{Index=4;Codec="subrip";Lang="spa";Title="";Forced=$false;EsPGS=$false}) }
+        )
+        $script:gruposProy = @(
+            @{ Clave="The Matrix";  Principal=$nM; Archivos=@($nM) },
+            @{ Clave="Friends";     Principal=$nF; Archivos=@($nF) },
+            @{ Clave="Interstellar";Principal=$nI; Archivos=@($nI) }
+        )
+        Set-ChipValor "modoLote" "HETEROGENEO"
+        Actualizar-ModoLote
+        $rA = "tab Matrix (activa): cardDTS=$($ui.cardDTS.Visibility) cardUndSub=$($ui.cardUndSub.Visibility) cardPGS=$($ui.cardPGS.Visibility) cardFiltro=$($ui.cardFiltro.Visibility)"
+        # Editar DTS en Matrix, ir a Friends (debe verse PGS), volver y comprobar que DTS se conserva.
+        Set-ChipValor "dts" "SIEMPRE"
+        Cambiar-TabProy 1
+        $rB = "tab Friends: cardDTS=$($ui.cardDTS.Visibility) cardPGS=$($ui.cardPGS.Visibility) cardUndAudio=$($ui.cardUndAudio.Visibility)"
+        Cambiar-TabProy 2
+        $rC = "tab Interstellar: cardFiltro=$($ui.cardFiltro.Visibility) cardDTS=$($ui.cardDTS.Visibility)"
+        Cambiar-TabProy 0
+        $rD = "vuelvo a Matrix: dts=$(Get-ChipValor 'dts') cardDTS=$($ui.cardDTS.Visibility) (esperado SIEMPRE / Visible)"
+        # Gathering del config por archivo (replica la lógica de envío): DTS y und por película.
+        $script:tabsProy[$script:tabProyActual].Decisiones = Snapshot-DecisionesTab
+        $resumen = @($script:tabsProy | ForEach-Object {
+            $d = $_.Decisiones
+            $nund = if ($d.Und) { @($d.Und.Keys).Count } else { 0 }
+            "$($_.Principal.Substring(0,12))…: DTS=$($d.Dts) undPistas=$nund"
+        }) -join " | "
+        Write-Host "TEST_HET_AV:`n  $rA`n  $rB`n  $rC`n  $rD`n  config: $resumen"
+        $r0 = "tras reconstruir: nTabs=$(@($script:tabsProy).Count) activa=$($script:tabProyActual) titulo='$($ui.txtTitulo.Text)' año='$($ui.txtAno.Text)' caps=$(Get-ChipValor 'capturasProy')"
+        # Editar plataforma + capturas de la peli 0, ir a la 1 (otras capturas) y volver: deben conservarse.
+        $ui.txtPlataformaOtra.Text = "EDITADO-NF"; Set-ChipValor "capturasProy" 20
+        Cambiar-TabProy 1
+        Set-ChipValor "capturasProy" 3
+        $r1 = "tab 1: titulo='$($ui.txtTitulo.Text)' platOtra='$($ui.txtPlataformaOtra.Text)' caps=$(Get-ChipValor 'capturasProy')"
+        Cambiar-TabProy 0
+        $r2 = "vuelvo a tab 0: titulo='$($ui.txtTitulo.Text)' platOtra='$($ui.txtPlataformaOtra.Text)' caps=$(Get-ChipValor 'capturasProy') (esperado EDITADO-NF / caps 20)"
+        # Mapa ProyectoPorArchivo que se enviaría (incluye NumCapturas por archivo)
+        if ($script:tabProyActual -ge 0) { $script:tabsProy[$script:tabProyActual].Estado = Snapshot-Proyecto }
+        $r3 = @($script:tabsProy | ForEach-Object { "$($_.Principal.Substring(0,[Math]::Min(20,$_.Principal.Length)))…=caps:$($_.Estado.Capturas)" }) -join " | "
+        Write-Host "TEST_HET:`n  $r0`n  $r1`n  $r2`n  caps por peli: $r3"
+    }
     try {
         $w = 1100; $h = 760
         $root = $win.Content
@@ -4509,7 +5241,7 @@ if ($script:modoTest) {
         }
         # Render ALTO de un panel concreto (para ver secciones largas sin scroll)
         if ($env:HDZ_GUI_TEST_TALL) {
-            $navMap = @{ navSubida="panSubida"; navAjustes="panAjustes"; navGeneral="panGeneral" }
+            $navMap = @{ navSubida="panSubida"; navAjustes="panAjustes"; navGeneral="panGeneral"; navProyecto="panProyecto"; navAudio="panAudio"; navSubs="panSubs" }
             $ui[$env:HDZ_GUI_TEST_TALL].IsChecked = $true
             $pan = $ui[$navMap[$env:HDZ_GUI_TEST_TALL]]
             $hh = 2200

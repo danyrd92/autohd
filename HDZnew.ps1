@@ -30,6 +30,56 @@ if ($env:HDZ_CONFIG -and (Test-Path -LiteralPath $env:HDZ_CONFIG)) {
         Write-Host "Aviso: no se pudo leer la configuración de la GUI ($($_.Exception.Message)). Se preguntará todo por consola." -ForegroundColor DarkYellow
     }
 }
+# Cuando la GUI lanza el montaje, el proceso es 100% DESATENDIDO: la consola NUNCA debe preguntar.
+# Si por cualquier desajuste faltara una decisión puntual, se aplica un valor por defecto sensato
+# (y se registra en el log) en lugar de bloquear el montaje con un Read-Host que nadie verá.
+$global:sinPreguntas = [bool]$global:cfgGui
+
+# --- RED DE SEGURIDAD: si pese a todo el montaje necesitara entrada del usuario ---
+# La GUI lanza este script en una consola OCULTA. Si quedara algún Read-Host sin cubrir, la GUI
+# parecería colgada (el usuario no ve la pregunta). Para evitarlo, interceptamos Read-Host: antes
+# de pedir nada, REVELAMOS la consola automáticamente y la traemos al frente, de modo que el
+# usuario vea la pregunta y pueda responder. Solo se activa en modo GUI ($env:HDZ_CONFIG).
+if ($env:HDZ_CONFIG) {
+    try {
+        Add-Type -Namespace HdzEng -Name Win -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
+[System.Runtime.InteropServices.DllImport("user32.dll")]   public static extern bool ShowWindow(System.IntPtr h, int n);
+[System.Runtime.InteropServices.DllImport("user32.dll")]   public static extern bool SetForegroundWindow(System.IntPtr h);
+'@
+    } catch {}
+
+    function Global:Mostrar-ConsolaMontaje {
+        # Canal oficial: escribir "1" en la bandera que vigila el hilo C# de la GUI (la mostrará).
+        if ($env:HDZ_CONSOLE_FLAG) { try { [System.IO.File]::WriteAllText($env:HDZ_CONSOLE_FLAG, "1") } catch {} }
+        # Refuerzo directo sobre nuestra propia ventana de consola (5 = SW_SHOW) + traer al frente.
+        try {
+            $h = [HdzEng.Win]::GetConsoleWindow()
+            if ($h -ne [System.IntPtr]::Zero) {
+                [void][HdzEng.Win]::ShowWindow($h, 5)
+                [void][HdzEng.Win]::SetForegroundWindow($h)
+            }
+        } catch {}
+    }
+
+    # Intercepta TODAS las llamadas a Read-Host del script: muestra la consola y avisa antes de pedir.
+    function Global:Read-Host {
+        [CmdletBinding()]
+        param(
+            [Parameter(Position = 0)] [string]$Prompt,
+            [switch]$AsSecureString
+        )
+        Mostrar-ConsolaMontaje
+        Write-Host ""
+        Write-Host "  ===================================================================" -ForegroundColor Yellow
+        Write-Host "  [!] El montaje necesita tu respuesta. Esta ventana se ha abierto sola." -ForegroundColor Yellow
+        Write-Host "      Contesta aquí abajo para que el proceso continúe." -ForegroundColor Yellow
+        Write-Host "  ===================================================================" -ForegroundColor Yellow
+        if ($AsSecureString) { return Microsoft.PowerShell.Utility\Read-Host -Prompt $Prompt -AsSecureString }
+        return Microsoft.PowerShell.Utility\Read-Host -Prompt $Prompt
+    }
+}
+
 # Devuelve el valor de una clave de la configuración GUI, o $null si no está definida
 # (en cuyo caso el script pregunta por consola como siempre).
 function Get-CfgGui($nombre) {
@@ -41,10 +91,18 @@ function Get-CfgGui($nombre) {
 }
 # Decisión forzado/completo de un sub único, POR idioma+formato (la GUI manda una sección por sub
 # en SubsUnicosPorIdioma = mapa "<cod>|<Text|PGS>" -> "Forzado"/"Completo"). Respaldo: decisión global.
-function Get-DecisionSubGui($cod, $fmt) {
+function Get-DecisionSubGui($cod, $fmt, $archivo = $null) {
+    $clave = "$cod|$fmt"
+    # POR ARCHIVO (modo «Cada archivo distinto»): mapa SubsUnicosPorArchivo[nombre][cod|fmt].
+    if ($archivo) {
+        $mapaPA = Get-CfgGui "SubsUnicosPorArchivo"
+        if ($mapaPA -and ($mapaPA.PSObject.Properties.Name -contains $archivo)) {
+            $sub = $mapaPA.$archivo
+            if ($sub -and ($sub.PSObject.Properties.Name -contains $clave)) { return "$($sub.$clave)" }
+        }
+    }
     $mapa = Get-CfgGui "SubsUnicosPorIdioma"
     if ($mapa) {
-        $clave = "$cod|$fmt"
         if ($mapa.PSObject.Properties.Name -contains $clave) { return "$($mapa.$clave)" }
     }
     return (Get-CfgGui "SubsUnicosDecision")
@@ -88,10 +146,17 @@ $global:totalGruposGui = 0
 # Resultados para la GUI: por cada torrent creado, una línea JSON (tipo/torrent/vídeo) que la GUI
 # lee para ir creando pestañas de subida automáticamente. Sin la variable, no hace nada.
 $global:rutaResultados = $env:HDZ_RESULTS
-function Add-ResultadoGui($tipo, $torrent, $video) {
+function Add-ResultadoGui($tipo, $torrent, $video, $capturas = @(), $origen = "") {
     if (-not $global:rutaResultados) { return }
     try {
-        ([ordered]@{ tipo = "$tipo"; torrent = "$torrent"; video = "$video" } | ConvertTo-Json -Compress) |
+        # 'origen' = carpeta donde el motor deja las capturas (la de trabajo, aunque el MKV se
+        # mueva a otra de salida). 'capturas' = rutas EXACTAS de los .jpg generados. Con esto la
+        # GUI localiza las capturas sin depender de los campos de la interfaz (robusto tras
+        # reabrir el programa, en packs con nombre distinto al del episodio, etc.).
+        ([ordered]@{
+            tipo = "$tipo"; torrent = "$torrent"; video = "$video"
+            origen = "$origen"; capturas = @($capturas | ForEach-Object { "$_" })
+        } | ConvertTo-Json -Compress) |
             Add-Content -LiteralPath $global:rutaResultados -Encoding UTF8
     } catch {}
 }
@@ -110,7 +175,21 @@ if ($vCfgUndPistas) {
 }
 
 # --- LOGGING PERSISTENTE (D3) ---
-$rutaLog = Join-Path $rutaCarpeta "hdz_montaje_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+# Los logs se guardan SIEMPRE en la carpeta del proyecto (logs\ junto al script), no en la
+# carpeta de cada vídeo, para tenerlos todos centralizados y poder revisarlos después aunque
+# el vídeo ya se haya movido/borrado. El nombre incluye la carpeta de origen para identificar
+# a qué vídeo o serie pertenece cada ejecución.
+$dirLogs = Join-Path $PSScriptRoot "logs"
+if (-not (Test-Path -LiteralPath $dirLogs)) {
+    try { New-Item -ItemType Directory -Path $dirLogs -Force | Out-Null } catch {}
+}
+$origenLog = ((Split-Path $rutaCarpeta -Leaf) -replace '[^\w\.\-]', '_')
+if (-not $origenLog) { $origenLog = "montaje" }
+$rutaLog = Join-Path $dirLogs "hdz_montaje_${origenLog}_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+# Si por permisos no se pudo crear logs\, caemos a la carpeta de trabajo (comportamiento anterior).
+if (-not (Test-Path -LiteralPath $dirLogs)) {
+    $rutaLog = Join-Path $rutaCarpeta "hdz_montaje_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+}
 # Fichero temporal de diagnóstico: el diagnóstico extensivo se escribe aquí directamente
 # (sin pasar por consola), y al terminar el script se anexa al log principal y se borra,
 # de forma que el usuario acaba con UN SOLO archivo .log pero sin ver el diagnóstico en pantalla.
@@ -1244,7 +1323,11 @@ function Resolve-SubsUnicosLote($grupos, $idiomasSubsMantener = $null) {
         }
 
         # Decisión POR sub (idioma+formato) elegida en la GUI; respaldo: decisión global.
-        $cfgSubUnico = Get-DecisionSubGui $info.CodLang $info.FmtSimple
+        # Para subs 'und' resueltos, la GUI puede haber guardado la decisión bajo el código RESUELTO,
+        # así que consultamos primero por ese código y, si no, por el original ('und').
+        $codResuelto = if ($info.CodLang -eq "und" -and $kDecision -ne $k) { ($kDecision -split '\|')[0] } else { $info.CodLang }
+        $cfgSubUnico = Get-DecisionSubGui $codResuelto $info.FmtSimple
+        if (-not $cfgSubUnico -and $codResuelto -ne $info.CodLang) { $cfgSubUnico = Get-DecisionSubGui $info.CodLang $info.FmtSimple }
         $resp = switch ("$cfgSubUnico") {
             "Forzado"   { "1" }
             "Completo"  { "2" }
@@ -1254,6 +1337,11 @@ function Resolve-SubsUnicosLote($grupos, $idiomasSubsMantener = $null) {
         if ($resp) {
             $txtResp = switch ($resp) { "1" { "Forzado" } "2" { "Completo" } "3" { "preguntar por archivo" } }
             Write-Host "   [GUI] Sub único $($info.NomLang) ($($info.FmtSimple)) -> $txtResp (configuración)." -ForegroundColor DarkGray
+        } elseif ($global:sinPreguntas) {
+            # Montaje desatendido (lanzado por la GUI): NO se pregunta. Un sub único sin señal de
+            # forzado se trata como Completo por defecto (lo habitual; los forzados sí llevan señal).
+            $resp = "2"
+            Write-Host "   [auto] Sub único $($info.NomLang) ($($info.FmtSimple)) sin decisión en la GUI -> Completo (por defecto, sin preguntar)." -ForegroundColor DarkYellow
         } else {
             Write-Host "`n   ¿El subtítulo $($info.NomLang) ($($info.FmtSimple)) es...?" -ForegroundColor Cyan
             Write-Host "     [1] Forzado en todos los archivos"
@@ -1319,14 +1407,21 @@ function Resolve-SubsUnicosArchivo($rutasArchivosMkv, $archivoPrincipal, $decisi
         if ($decisiones.ContainsKey($llave)) { $decisionPrevia = $decisiones[$llave] }
         if ($decisionPrevia -eq "Forzado" -or $decisionPrevia -eq "Completo") { continue }
 
-        # Decisión pre-elegida en la GUI (modo heterogéneo): por sub (idioma+formato), con respaldo global.
-        $cfgSubUnico = Get-DecisionSubGui $c.CodLang $c.FmtSimple
+        # Decisión pre-elegida en la GUI (modo heterogéneo): por sub (idioma+formato) de ESTE archivo,
+        # con respaldo al mapa global y a la decisión global.
+        $cfgSubUnico = Get-DecisionSubGui $c.CodLang $c.FmtSimple $archivoPrincipal.Name
         if ("$cfgSubUnico" -in @("Forzado", "Completo")) {
             $decisiones[$llave] = "$cfgSubUnico"
             Write-Host "   [GUI] Sub único $nomMostrar ($($c.FmtSimple)) -> $cfgSubUnico (configuración)." -ForegroundColor DarkGray
             continue
         }
 
+        if ($global:sinPreguntas) {
+            # Montaje desatendido: no se pregunta. Por defecto, Completo (un sub único sin señal).
+            $decisiones[$llave] = "Completo"
+            Write-Host "   [auto] Sub único $nomMostrar ($($c.FmtSimple)) sin decisión -> Completo (por defecto, sin preguntar)." -ForegroundColor DarkYellow
+            continue
+        }
         Write-Host "`n   ¿El subtítulo $nomMostrar ($($c.FmtSimple)) es...?" -ForegroundColor Cyan
         Write-Host "     [1] Forzado"
         Write-Host "     [2] Completo"
@@ -1378,6 +1473,12 @@ function Resolve-SubsExternosForzados($rutasArchivosMkv, $prefijoArchivo, $decis
             continue
         }
 
+        if ($global:sinPreguntas) {
+            # Montaje desatendido: no se pregunta. Por defecto, Completo.
+            $decisiones[$kExt] = "Completo"
+            Write-Host "   [auto] Sub externo '$($c.NombreExterno)' sin decisión -> Completo (por defecto, sin preguntar)." -ForegroundColor DarkYellow
+            continue
+        }
         Write-Host "`n   ¿El subtítulo externo $($c.NomLang) '$($c.NombreExterno)' es...?" -ForegroundColor Cyan
         Write-Host "     [1] Forzado"
         Write-Host "     [2] Completo"
@@ -1514,6 +1615,25 @@ function Set-FlagForzados($listaSubs, $rutaMkvOrigen = $null, $decisionesSubUnic
 # El parámetro $contexto se imprime como cabecera para que en heterogéneo se vea
 # de qué archivo se están preguntando los datos.
 function Get-DatosProyecto($contexto) {
+    # Identidad POR ARCHIVO (modo «Cada archivo distinto»): la GUI manda un mapa nombreArchivo ->
+    # datos de proyecto (una pestaña por película). Si existe entrada para este archivo, se usa.
+    $cfgPorArchivo = Get-CfgGui "ProyectoPorArchivo"
+    if ($contexto -and $cfgPorArchivo -and ($cfgPorArchivo.PSObject.Properties.Name -contains $contexto)) {
+        $pf = $cfgPorArchivo.$contexto
+        Write-Host "`n[GUI] Datos de proyecto POR ARCHIVO para: $contexto" -ForegroundColor DarkGray
+        $origenPF  = if ("$($pf.TipoOrigen)" -eq "FISICO") { "FISICO" } else { "WEB" }
+        $webTipoPF = if ("$($pf.WebTipo)" -in @("WEB-DL", "WEBRip")) { "$($pf.WebTipo)" } else { "WEB-DL" }
+        return [PSCustomObject]@{
+            Titulo            = "$($pf.Titulo)"
+            Ano               = "$($pf.Ano)"
+            EsSerie           = [bool]$pf.EsSerie
+            TipoOrigen        = $origenPF
+            WebTipo           = $webTipoPF
+            PlataformaFormato = "$($pf.PlataformaFormato)"
+            EtiquetasExtra    = "$($pf.EtiquetasExtra)"
+        }
+    }
+
     # Datos pre-rellenados desde la GUI. En modo heterogéneo (con $contexto) solo se usan si
     # el usuario marcó "aplicar a todos los archivos"; si no, se pregunta por consola por cada uno.
     $cfgProy = Get-CfgGui "Proyecto"
@@ -2873,6 +2993,10 @@ function Set-Banderas($archivoMkv, $audiosOrdenados, $subsOrdenados, $defaultPre
 # Si el vídeo es HDR ($esHdr=$true), aplica tonemapping para que la captura se vea bien en SDR.
 # Si es SDR, hace una captura directa (sin tonemap, que falsearía los colores).
 function New-Capturas($archivoFinalDestino, $nombreFinal, $numCapturas, $esHdr = $true) {
+    # Registro de las capturas generadas en esta llamada (para que la GUI sepa EXACTAMENTE
+    # dónde están, sin tener que adivinarlas a partir de los campos de la interfaz). Se acumula
+    # también en $global:capturasLote para el resultado del PACK.
+    $global:ultimasCapturas = @()
     if ($numCapturas -le 0) { return }
     $tipoCaptura = if ($esHdr) { "tonemapped (HDR)" } else { "directas (SDR)" }
     Write-Host "`n[>>] Generando $numCapturas capturas $tipoCaptura..." -ForegroundColor Cyan
@@ -2926,6 +3050,10 @@ function New-Capturas($archivoFinalDestino, $nombreFinal, $numCapturas, $esHdr =
             } else {
                 # SDR: captura directa, sin tonemap
                 ffmpeg -noaccurate_seek -ss $t -i "$archivoFinalDestino" -frames:v 1 -q:v 2 "$rutaCap" -y -loglevel fatal
+            }
+            if (Test-Path -LiteralPath $rutaCap) {
+                $global:ultimasCapturas += $rutaCap
+                $global:capturasLote   += $rutaCap
             }
             Write-Host "   -> Captura en segundo $t" -ForegroundColor Gray
         }
@@ -3383,6 +3511,7 @@ Write-Host "`n[+] Configuración guardada. Iniciando cadena de montaje..." -Fore
 Write-DiagConfiguracion
 # Rutas de los MKV finales de ESTA ejecución (las usa el torrent de PACK al terminar)
 $global:archivosFinalesLote = @()
+$global:capturasLote = @()        # rutas de TODAS las capturas del lote (para el resultado del PACK)
 $respuestasIdiomasSubs = @{}   # Memoria global de idiomas para subs (D4: claves con path)
 $respuestasIdiomasAudios = @{} # Memoria global de idiomas para audios
 # Pre-carga de las decisiones POR PISTA de la GUI: con la clave ya en memoria, ni
@@ -3442,6 +3571,16 @@ foreach ($grupo in $grupos) {
         Write-Host "`n=========================================================" -ForegroundColor Magenta
         Write-Host " PROCESANDO: $($archivoPrincipal.Name)" -ForegroundColor Magenta
         $global:archivoEnCurso = $archivoPrincipal.Name
+
+        # --- Decisiones POR ARCHIVO (modo «Cada archivo distinto»): la GUI manda un mapa
+        # DecisionesPorArchivo[nombre] con DTS/audio-defecto/filtro/PGS propios de cada película.
+        # Si no hay entrada (modo homogéneo), se usan los valores globales de siempre. ---
+        $pfDec = $null
+        $cfgDPA = Get-CfgGui "DecisionesPorArchivo"
+        if ($cfgDPA -and $archivoPrincipal -and ($cfgDPA.PSObject.Properties.Name -contains $archivoPrincipal.Name)) { $pfDec = $cfgDPA.$($archivoPrincipal.Name) }
+        $modoDTSArchivo  = if ($pfDec -and "$($pfDec.Dts)" -in @("SIEMPRE", "NUNCA", "PREGUNTAR")) { "$($pfDec.Dts)" } else { $modoConversionDTS }
+        $defAudioArchivo = if ($pfDec -and "$($pfDec.DefAudio)" -in @("DOLBY", "DTS")) { "$($pfDec.DefAudio)" } else { $defaultPreferidoAudio }
+        if ($pfDec) { Write-Host "   [GUI] Decisiones propias de esta película: DTS=$modoDTSArchivo, audio-def=$defAudioArchivo." -ForegroundColor DarkGray }
         $global:idxGrupoGui++
         # Base de progreso de este archivo: el avance corre dentro de su "porción" (1/total).
         $global:pctBaseGui = if ($global:totalGruposGui -gt 0) { [int](100 * ($global:idxGrupoGui - 1) / $global:totalGruposGui) } else { 0 }
@@ -3519,6 +3658,12 @@ foreach ($grupo in $grupos) {
         # en HETEROGÉNEO preguntamos para este archivo concreto (si tiene >3 idiomas).
         if ($modoLote -eq "HOMOGENEO") {
             $idiomasSubsMantener = $idiomasSubsMantenerGlobal
+        } elseif ($pfDec -and ($pfDec.PSObject.Properties.Name -contains "Filtro")) {
+            # Filtro de idiomas propio de esta película (mismas reglas que IdiomasSubsMantener).
+            $fv = $pfDec.Filtro
+            $idiomasSubsMantener = if ($null -eq $fv -or "$fv" -eq "TODOS") { $null }
+                                   elseif ("$fv" -eq "CAST_ENG") { @("__CAST_ENG__") }
+                                   else { @($fv) }
         } else {
             $idiomasSubsMantener = Resolve-IdiomasSubsArchivo $origenesPistas
         }
@@ -3549,7 +3694,7 @@ foreach ($grupo in $grupos) {
             $tienePgsEste = $false
             foreach ($mkv in $origenesPistas) { if (Test-TienePGS $mkv) { $tienePgsEste = $true; break } }
             if ($tienePgsEste) {
-                $cfgExtraerH = Get-CfgGui "ExtraerPGS"
+                $cfgExtraerH = if ($pfDec -and ($pfDec.PSObject.Properties.Name -contains "ExtraerPGS")) { [bool]$pfDec.ExtraerPGS } else { Get-CfgGui "ExtraerPGS" }
                 $rEx = if ($null -ne $cfgExtraerH) {
                     Write-Host "`n[GUI] Extraer PGS para OCR: $(if ($cfgExtraerH) { 'Sí' } else { 'No' }) (configuración)." -ForegroundColor DarkGray
                     if ($cfgExtraerH) { "S" } else { "N" }
@@ -3558,7 +3703,7 @@ foreach ($grupo in $grupos) {
                 }
                 if ($rEx -match "^[sS]") {
                     $decisionExtraerPGSHetero = $true
-                    $cfgConsPGSH = Get-CfgGui "DecisionConservarPGS"
+                    $cfgConsPGSH = if ($pfDec -and $pfDec.ConservarPGS) { "$($pfDec.ConservarPGS)" } else { Get-CfgGui "DecisionConservarPGS" }
                     if ("$cfgConsPGSH" -in @("CONSERVAR_PGS", "ELIMINAR_PGS")) {
                         $decisionConservarPGSHetero = "$cfgConsPGSH"
                         Write-Host "[GUI] Tras convertir los PGS: $(if ($decisionConservarPGSHetero -eq 'CONSERVAR_PGS') { 'mantener PGS + SRT' } else { 'solo SRT (borrar PGS)' }) (configuración)." -ForegroundColor DarkGray
@@ -3589,7 +3734,7 @@ foreach ($grupo in $grupos) {
             $archivosBorrables += $resFusion.Borrables
         }
 
-        $archivosBorrables += Invoke-ConversionDTSMultiidioma $origenesPistas $modoConversionDTS $respuestasIdiomasAudios
+        $archivosBorrables += Invoke-ConversionDTSMultiidioma $origenesPistas $modoDTSArchivo $respuestasIdiomasAudios
 
         # --- PGS ---
         # HOMOGÉNEO: ya se preguntó y se extrajo todo al inicio (pausa única). Solo recogemos
@@ -3744,7 +3889,7 @@ foreach ($grupo in $grupos) {
         # =========================================================================
         Write-Host "`n[>>] Aplicando banderas y calculando nombre final..." -ForegroundColor Cyan
         Write-DiagPaso "mkvpropedit + calculo nombre: INICIO"
-        Set-Banderas $archivoSalidaTemporal $audiosOrdenados $subsOrdenados $defaultPreferidoAudio
+        Set-Banderas $archivoSalidaTemporal $audiosOrdenados $subsOrdenados $defAudioArchivo
 
         # Leemos los datos técnicos del archivo final ya muxeado (resolución, audio, HDR, códec).
         # Es la fuente fiable: refleja exactamente lo que mediainfo verá en el .mkv resultante,
@@ -3924,8 +4069,16 @@ foreach ($grupo in $grupos) {
         # Capturas: tonemapped solo si el vídeo es HDR. $hdrVideo viene de Get-DatosTecnicosMkv
         # (será "DV HDR10", "HDR10", "HDR10+", etc. en HDR; cadena vacía en SDR).
         $videoEsHdr = -not [string]::IsNullOrWhiteSpace($hdrVideo)
+        # Capturas POR ARCHIVO (modo «Cada archivo distinto»): si la GUI mandó un valor propio para
+        # esta película en ProyectoPorArchivo, se usa; si no, el global $numCapturas.
+        $capturasArchivo = $numCapturas
+        $cfgPFCaps = Get-CfgGui "ProyectoPorArchivo"
+        if ($cfgPFCaps -and $archivoPrincipal -and ($cfgPFCaps.PSObject.Properties.Name -contains $archivoPrincipal.Name)) {
+            $ncPF = $cfgPFCaps.$($archivoPrincipal.Name).NumCapturas
+            if ($null -ne $ncPF -and [int]$ncPF -ge 0) { $capturasArchivo = [int]$ncPF }
+        }
         Set-ProgresoGui ([int]($global:pctBaseGui + $global:pctPasoGui * 0.85)) "Generando capturas $($global:idxGrupoGui)/$($global:totalGruposGui)" (Split-Path $archivoFinalDestino -Leaf)
-        New-Capturas $archivoFinalDestino (Split-Path $archivoFinalDestino -Leaf) $numCapturas $videoEsHdr
+        New-Capturas $archivoFinalDestino (Split-Path $archivoFinalDestino -Leaf) $capturasArchivo $videoEsHdr
 
         # Torrent del resultado final (si se pidió). Fallo no fatal: se anota y se sigue.
         if ($modoTorrent -in @("INDIVIDUAL", "AMBOS")) {
@@ -3934,7 +4087,9 @@ foreach ($grupo in $grupos) {
             try {
                 $rutaTorrentFinal = New-TorrentArchivo $archivoFinalDestino $torrentAnnounce "" $carpetaTorrentGui
                 Write-Host "   -> Torrent creado: $(Split-Path $rutaTorrentFinal -Leaf)" -ForegroundColor Green
-                Add-ResultadoGui "archivo" $rutaTorrentFinal $archivoFinalDestino   # la GUI crea una pestaña de subida
+                # la GUI crea una pestaña de subida; le pasamos las capturas de ESTE archivo y la
+                # carpeta de origen para que las localice aunque el MKV se haya movido a otra carpeta.
+                Add-ResultadoGui "archivo" $rutaTorrentFinal $archivoFinalDestino $global:ultimasCapturas $rutaCarpeta
             } catch {
                 Write-Host "   [!] No se pudo crear el .torrent: $($_.Exception.Message)" -ForegroundColor Red
                 Add-Incidencia $global:archivoEnCurso "Fallo creando el .torrent: $($_.Exception.Message)"
@@ -4005,7 +4160,9 @@ if ($modoTorrent -in @("PACK", "AMBOS") -and @($global:archivosFinalesLote).Coun
         Write-Host "   -> Pack listo: carpeta '$nombrePack' + $(Split-Path $rutaTorrentPack -Leaf)" -ForegroundColor Green
         $primerVideoPack = @(Get-ChildItem -LiteralPath $rutaPack -File -Recurse -ErrorAction SilentlyContinue |
                              Where-Object { $_.Extension -match "(?i)^\.(mkv|mp4)$" } | Sort-Object FullName | Select-Object -First 1)
-        Add-ResultadoGui "pack" $rutaTorrentPack $(if ($primerVideoPack.Count) { $primerVideoPack[0].FullName } else { "" })
+        # En el PACK las capturas conservan el nombre de cada episodio (no el del pack), así que
+        # pasamos las rutas exactas de TODO el lote + la carpeta de origen donde quedaron.
+        Add-ResultadoGui "pack" $rutaTorrentPack $(if ($primerVideoPack.Count) { $primerVideoPack[0].FullName } else { "" }) $global:capturasLote $rutaCarpeta
     } catch {
         Write-Host "   [!] No se pudo crear el torrent del pack: $($_.Exception.Message)" -ForegroundColor Red
         Add-Incidencia $null "Fallo creando el torrent del PACK: $($_.Exception.Message)"

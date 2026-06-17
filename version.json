@@ -1,7 +1,7 @@
 {
-  "version": "1.0.1",
-  "fecha": "2026-06-15",
-  "notas": "Prueba de Actualización.",
+  "version": "1.1.0",
+  "fecha": "2026-06-17",
+  "notas": "Modo heterogeneo con pestanas por pelicula (identidad y audio/subtitulos por archivo); capturas por archivo siempre en el menu Proyecto (con 15/20/30); el motor reporta la ubicacion exacta de las capturas para que la subida las localice aunque cambies la carpeta de destino; dialogos oscuros para actualizar y empezar de cero; identificacion dinamica al cambiar de carpeta; opcion para quitar el sufijo .procesado; la consola nunca pregunta en modo GUI y se abre sola si lo necesita; logs guardados en la carpeta del proyecto.",
   "archivos": [
     "VERSION.txt",
     "HDZ-GUI.ps1",
