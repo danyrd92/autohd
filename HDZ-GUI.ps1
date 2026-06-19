@@ -28,6 +28,7 @@ if ((Test-Path -LiteralPath $rutaBin) -and ($env:PATH -notlike "*$rutaBin*")) { 
 # que el usuario ya descartó actualizar (para no volver a avisarle de la MISMA).
 $script:HDZVersion = "1.0.0"
 $script:ajusteVerDescartada = ""
+$script:bienvenidaVista = $false   # ¿ya se mostró la ventana de bienvenida (primer arranque)?
 
 $rutaScript  = Join-Path $PSScriptRoot "HDZnew.ps1"
 $rutaTorrentMod = Join-Path $PSScriptRoot "HDZ-Torrent.ps1"
@@ -4513,6 +4514,7 @@ function Guardar-Ajustes {
             Firma          = $(if ($script:firmaSel) { Split-Path $script:firmaSel -Leaf } else { "" })
             Announce       = & $keep $ui.txtAnnounce.Text "Announce"
             UltimaVersionDescartada = $script:ajusteVerDescartada
+            BienvenidaVista = [bool]$script:bienvenidaVista
         }
         # Defensa 3: escritura ATÓMICA con respaldo. Escribimos a un temporal, guardamos el
         # fichero actual como .bak (red de recuperación) y luego reemplazamos. Si algo falla a
@@ -4530,6 +4532,7 @@ function Restaurar-Ajustes {
         $aj = Get-Content -LiteralPath $rutaAjustes -Raw -Encoding UTF8 | ConvertFrom-Json
         if ("$($aj.Version)" -ne "2") { return }
         if ($aj.UltimaVersionDescartada) { $script:ajusteVerDescartada = "$($aj.UltimaVersionDescartada)" }
+        if ($null -ne $aj.BienvenidaVista) { $script:bienvenidaVista = [bool]$aj.BienvenidaVista }
         # Recuperación: si una clave sensible está vacía en el fichero principal pero el respaldo
         # .bak (versión anterior) sí la tiene, la rescatamos de ahí. Así un borrado accidental se
         # auto-repara en el siguiente arranque en vez de quedarse perdido.
@@ -5110,6 +5113,132 @@ function Show-DialogoHDZ {
     return [bool]$res
 }
 
+# =========================================================================
+# Ventana de BIENVENIDA (primer arranque): pide las credenciales del usuario.
+# Las claves se guardan SOLO en %APPDATA% (nunca viajan con el programa). Se
+# muestra una vez, cuando aún no hay token de tracker configurado.
+# =========================================================================
+function Show-Bienvenida {
+    param([System.Windows.Window]$Owner = $null)
+    $xamlB = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        SizeToContent="Height" Width="580" ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterScreen" FontFamily="Segoe UI" FontSize="13"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
+  <Window.Resources>
+    <Style x:Key="In" TargetType="TextBox">
+      <Setter Property="Background" Value="#0E0E11"/>
+      <Setter Property="Foreground" Value="#EDEDEF"/>
+      <Setter Property="CaretBrush" Value="#EDEDEF"/>
+      <Setter Property="BorderBrush" Value="#242429"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="10,8"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="TextBox">
+            <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
+              <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="bd" Property="BorderBrush" Value="#D92B2B"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="P" TargetType="Button">
+      <Setter Property="Foreground" Value="White"/><Setter Property="FontSize" Value="13.5"/>
+      <Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template"><Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="bd" Background="#D92B2B" CornerRadius="9" Padding="22,10"><ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"/></Border>
+          <ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Background" Value="#EF4444"/></Trigger></ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value></Setter>
+    </Style>
+    <Style x:Key="G" TargetType="Button">
+      <Setter Property="Foreground" Value="#C8C8CE"/><Setter Property="FontSize" Value="13.5"/>
+      <Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template"><Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="bd" Background="#1A1A1F" BorderBrush="#2E2E35" BorderThickness="1" CornerRadius="9" Padding="20,10"><ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"/></Border>
+          <ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="BorderBrush" Value="#D92B2B"/><Setter Property="Foreground" Value="White"/></Trigger></ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value></Setter>
+    </Style>
+    <Style x:Key="Lb" TargetType="TextBlock"><Setter Property="Foreground" Value="#EDEDEF"/><Setter Property="FontSize" Value="12.5"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Margin" Value="2,0,0,5"/></Style>
+    <Style x:Key="Hn" TargetType="TextBlock"><Setter Property="Foreground" Value="#9C9CA8"/><Setter Property="FontSize" Value="11.5"/><Setter Property="Margin" Value="2,4,0,14"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
+  </Window.Resources>
+  <Border Background="#131316" BorderBrush="#2E2E35" BorderThickness="1" CornerRadius="14" Margin="16">
+    <Border.Effect><DropShadowEffect BlurRadius="30" ShadowDepth="7" Opacity="0.55" Color="#000000"/></Border.Effect>
+    <StackPanel Margin="30,26,30,24">
+      <StackPanel x:Name="barra" Margin="0,0,0,4">
+        <TextBlock Text="Bienvenido a HD ZERO Studio" Foreground="#EDEDEF" FontSize="18" FontWeight="SemiBold"/>
+        <TextBlock Text="Configura tus credenciales para empezar." Foreground="#9C9CA8" FontSize="13" Margin="0,2,0,0"/>
+      </StackPanel>
+      <Border Background="#101013" BorderBrush="#242429" BorderThickness="1" CornerRadius="9" Padding="12,9" Margin="0,14,0,18">
+        <TextBlock Foreground="#9C9CA8" FontSize="12" TextWrapping="Wrap"
+          Text="🔒  Se guardan SOLO en tu equipo (%APPDATA%). Nunca se comparten ni viajan con el programa. Podrás cambiarlas cuando quieras en «Ajustes / claves»."/>
+      </Border>
+
+      <TextBlock Style="{StaticResource Lb}" Text="URL del tracker"/>
+      <TextBox x:Name="bUrl" Style="{StaticResource In}"/>
+      <TextBlock Style="{StaticResource Hn}" Text="Por defecto: https://hdzero.org"/>
+
+      <TextBlock Style="{StaticResource Lb}" Text="Token de la API (api_token)"/>
+      <TextBox x:Name="bTok" Style="{StaticResource In}"/>
+      <TextBlock Style="{StaticResource Hn}" Text="En HDZERO → tu perfil → Configuración → Seguridad."/>
+
+      <TextBlock Style="{StaticResource Lb}" Text="URL de anuncio (announce, con tu passkey)"/>
+      <TextBox x:Name="bAnn" Style="{StaticResource In}"/>
+      <TextBlock Style="{StaticResource Hn}" Text="La que usas para subir torrents (incluye tu passkey personal)."/>
+
+      <TextBlock Style="{StaticResource Lb}" Text="Clave o token de TMDB (opcional)"/>
+      <TextBox x:Name="bTmdb" Style="{StaticResource In}"/>
+      <TextBlock Style="{StaticResource Hn}" Text="Para la búsqueda automática. themoviedb.org → Ajustes → API. Puedes dejarlo vacío."/>
+
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,0">
+        <Button x:Name="bSkip" Style="{StaticResource G}" Content="Ahora no" Margin="0,0,10,0"/>
+        <Button x:Name="bSave" Style="{StaticResource P}" Content="Guardar y empezar"/>
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</Window>
+'@
+    $b = [Windows.Markup.XamlReader]::Parse($xamlB)
+    $g = @{}
+    foreach ($n in @("barra","bUrl","bTok","bAnn","bTmdb","bSkip","bSave")) { $g[$n] = $b.FindName($n) }
+    # Prefijar con lo que ya hubiera (normalmente vacío en un PC nuevo).
+    $g.bUrl.Text  = if (-not [string]::IsNullOrWhiteSpace($ui.cfgTrackerUrl.Text)) { $ui.cfgTrackerUrl.Text } else { "https://hdzero.org" }
+    $g.bTok.Text  = "$($ui.cfgTrackerToken.Text)"
+    $g.bAnn.Text  = "$($ui.txtAnnounce.Text)"
+    $g.bTmdb.Text = "$($ui.cfgTmdbKey.Text)"
+    $g.barra.Add_MouseLeftButtonDown({ try { $b.DragMove() } catch {} }.GetNewClosure())
+    $g.bSave.IsDefault = $true
+    $g.bSave.Add_Click({
+        $ui.cfgTrackerUrl.Text   = "$($g.bUrl.Text)".Trim()
+        $ui.cfgTrackerToken.Text = "$($g.bTok.Text)".Trim()
+        $ui.txtAnnounce.Text     = "$($g.bAnn.Text)".Trim()
+        $ui.cfgTmdbKey.Text      = "$($g.bTmdb.Text)".Trim()
+        $script:bienvenidaVista = $true
+        Guardar-Ajustes
+        $b.DialogResult = $true
+    }.GetNewClosure())
+    $g.bSkip.IsCancel = $true
+    $g.bSkip.Add_Click({
+        $script:bienvenidaVista = $true   # no volver a molestar; se configura en Ajustes
+        Guardar-Ajustes
+        $b.DialogResult = $false
+    }.GetNewClosure())
+    if ($Owner) { $b.Owner = $Owner; $b.WindowStartupLocation = "CenterOwner" }
+    [void]$b.ShowDialog()
+}
+
 $ui.btnReset.Add_Click({
     $ok = Show-DialogoHDZ -Owner $win -Icono "🗑" -Titulo "Empezar de Zero" `
         -Mensaje "Se borrará la carpeta seleccionada y todas las opciones marcadas, dejando el programa como recién abierto.`n`nNo se borra ningún archivo del disco ni tus credenciales de Ajustes.`n`n¿Continuar?" `
@@ -5255,6 +5384,11 @@ $win.Add_Loaded({
         [void]$win.Activate()
         $win.Topmost = $true; $win.Topmost = $false
     } catch {}
+    # Primer arranque: si aún no hay token de tracker y no se mostró antes, guiamos al usuario con
+    # la ventana de bienvenida para que ponga SUS credenciales (se guardan solo en su %APPDATA%).
+    if (-not $script:modoTest -and -not $script:bienvenidaVista -and [string]::IsNullOrWhiteSpace($ui.cfgTrackerToken.Text)) {
+        try { Show-Bienvenida -Owner $win } catch {}
+    }
     # Buscar actualizaciones en segundo plano (no molesta si no hay repo configurado o no hay novedad).
     try { $win.Dispatcher.InvokeAsync([action]{ Iniciar-ChequeoActualizacion }, [System.Windows.Threading.DispatcherPriority]::Background) | Out-Null } catch {}
 })

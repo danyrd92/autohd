@@ -1,7 +1,7 @@
 {
-  "version": "1.2.0",
+  "version": "1.2.1",
   "fecha": "2026-06-19",
-  "notas": "Nuevo conversor de audio: convierte cualquier pista a DD+, DD o AAC, con opciones segun sus canales (2.0/5.1/7.1) y eligiendo si mantener o sustituir la original. Reemplaza a la conversion DTS automatica (ahora el DTS tambien se convierte a mano).",
+  "notas": "Ventana de bienvenida en el primer arranque: pide tus credenciales (URL del tracker, token de la API, announce y TMDB) y las guarda solo en tu equipo (%APPDATA%). Antes los campos quedaban vacios sin guia. Tus claves nunca viajan con el programa.",
   "archivos": [
     "VERSION.txt",
     "HDZ-GUI.ps1",
