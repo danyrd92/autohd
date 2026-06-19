@@ -1,7 +1,7 @@
 {
-  "version": "1.1.0",
-  "fecha": "2026-06-17",
-  "notas": "Modo heterogeneo con pestanas por pelicula (identidad y audio/subtitulos por archivo); capturas por archivo siempre en el menu Proyecto (con 15/20/30); el motor reporta la ubicacion exacta de las capturas para que la subida las localice aunque cambies la carpeta de destino; dialogos oscuros para actualizar y empezar de cero; identificacion dinamica al cambiar de carpeta; opcion para quitar el sufijo .procesado; la consola nunca pregunta en modo GUI y se abre sola si lo necesita; logs guardados en la carpeta del proyecto.",
+  "version": "1.2.0",
+  "fecha": "2026-06-19",
+  "notas": "Nuevo conversor de audio por pista (seccion Audio): elige cualquier pista del video y conviertela al formato que quieras (DD+, DD, AAC), con opciones que se adaptan a sus canales (2.0/5.1/7.1). Puedes encadenar varias conversiones y en cada una decidir si mantener la pista original o sustituirla; el delay/sincronia se preserva. Sustituye a la antigua conversion automatica de DTS: ahora el DTS se convierte a mano como una pista mas. Nota tecnica: DD+ y DD llegan hasta 5.1 (limite del codificador), el 7.1 se ofrece via AAC.",
   "archivos": [
     "VERSION.txt",
     "HDZ-GUI.ps1",

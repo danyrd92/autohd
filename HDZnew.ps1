@@ -2286,6 +2286,88 @@ function Invoke-ConversionDTSMultiidioma($origenesPistas, $modo = "SIEMPRE", $me
     return $generados
 }
 
+# =========================================================================
+# CONVERSOR DE AUDIO MANUAL (por pista) — sustituye a la conversión DTS automática.
+# Recibe la lista de conversiones del usuario (GUI) para UN archivo y genera, por cada
+# una, una pista externa ya convertida (códec/canales/bitrate elegidos), preservando el
+# delay de origen (idéntica técnica que la conversión DTS). Devuelve:
+#   .Nuevos           = descriptores de pista (Origen="Externo") a inyectar en el mux
+#   .IndicesAEliminar = índices de pista ORIGINAL a quitar (cuando NO se «Mantiene original»)
+#   .Borrables        = ficheros temporales a borrar al terminar
+# =========================================================================
+function Invoke-ConversionAudioManual($conversiones, $archivoPrincipal) {
+    $res = @{ Nuevos = @(); IndicesAEliminar = @(); Borrables = @() }
+    $lista = @($conversiones | Where-Object { $_ })
+    if ($lista.Count -eq 0) { return $res }
+
+    Write-DiagPaso "Conversion audio manual: INICIO ($($lista.Count) conversion(es))"
+    $rutaFuente = $archivoPrincipal.FullName
+    $baseNombre = [System.IO.Path]::GetFileNameWithoutExtension($archivoPrincipal.Name)
+    $fmtMediainfo = @{ "eac3" = "E-AC-3"; "ac3" = "AC-3"; "aac" = "AAC" }
+    # AAC va en contenedor .m4a (MP4): el .aac crudo (ADTS) no admite 7.1. eac3/ac3 como flujo crudo.
+    $extPorCodec  = @{ "eac3" = "eac3"; "ac3" = "ac3"; "aac" = "m4a" }
+
+    # Para cada índice de origen, ¿alguna conversión pide conservar el original? El original solo
+    # se elimina si TODAS sus conversiones tienen «Mantener original» = false (regla segura).
+    $conservar = @{}
+    foreach ($c in $lista) {
+        $idx = [int]$c.Index
+        if (-not $conservar.ContainsKey($idx)) { $conservar[$idx] = $false }
+        if ([bool]$c.MantenerOriginal) { $conservar[$idx] = $true }
+    }
+
+    $n = 0
+    foreach ($c in $lista) {
+        $n++
+        $idx  = [int]$c.Index
+        $cod  = "$($c.CodecDestino)".ToLower()
+        $ch   = [int]$c.CanalesDestino
+        $br   = [int]$c.BitrateK
+        $lang = if ([string]::IsNullOrWhiteSpace("$($c.Lang)")) { "und" } else { "$($c.Lang)" }
+        if (-not $fmtMediainfo.ContainsKey($cod)) {
+            Write-Host "   [!] Códec de destino no soportado: '$cod'. Se omite esta conversión." -ForegroundColor Red
+            continue
+        }
+        $ext    = $extPorCodec[$cod]
+        $salida = Join-Path $rutaCarpeta "${baseNombre}_conv${n}_${lang}_${cod}${ch}.${ext}"
+
+        # Delay (start_time) de la pista de origen, para preservar la sincronía (igual que DTS).
+        $startTimeRaw = ffprobe -v error -select_streams "$idx" -show_entries stream=start_time -of csv=p=0 $rutaFuente 2>$null
+        $delaySeg = 0.0
+        [double]::TryParse(("$startTimeRaw").Replace(',', '.'), [System.Globalization.NumberStyles]::Any, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$delaySeg) | Out-Null
+        $delayMs = [int][Math]::Round($delaySeg * 1000)
+
+        $nomComercial = switch ($cod) { "eac3" { "DD+" } "ac3" { "DD" } "aac" { "AAC" } default { $cod.ToUpper() } }
+        $layStr = switch ($ch) { 8 { "7.1" } 6 { "5.1" } 2 { "2.0" } 1 { "1.0" } default { "$ch ch" } }
+        Write-Host "   -> Convirtiendo pista $idx ($lang) a $nomComercial $layStr (${br}k)..." -ForegroundColor Gray
+        Write-DiagPaso "  ffmpeg conv INICIO: idx=$idx -> $cod ${ch}ch ${br}k delay=${delayMs}ms"
+        if ($delayMs -gt 0) {
+            Write-Host "      (delay de origen: ${delayMs} ms, se preserva)" -ForegroundColor DarkGray
+            $null = ffmpeg -i $rutaFuente -map "0:$idx" -af "adelay=${delayMs}:all=1" -c:a $cod -ac $ch -b:a "${br}k" $salida -y -v error
+        } else {
+            $null = ffmpeg -i $rutaFuente -map "0:$idx" -c:a $cod -ac $ch -b:a "${br}k" $salida -y -v error
+        }
+        Write-DiagPaso "  ffmpeg conv FIN: idx=$idx exit=$LASTEXITCODE"
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $salida)) {
+            Write-Host "   [!] ffmpeg falló convirtiendo la pista $idx a $nomComercial $layStr." -ForegroundColor Red
+            continue
+        }
+        $nomIdioma = Get-LanguageName $lang ""
+        $res.Nuevos += [PSCustomObject]@{
+            Origen = "Externo"; ID = $salida; ArchivoFuente = $salida
+            Tipo = "Audio"; CodLang = $lang; NomLang = $nomIdioma; PesoLang = (Get-PesoIdioma $nomIdioma)
+            Format = $fmtMediainfo[$cod]; Profile = ""; Comm = ""; Chan = $ch
+            Size = (Get-Item -LiteralPath $salida).Length; IsForced = $false; MediainfoForcedFlag = $false; NomFinal = ""
+        }
+        $res.Borrables += $salida
+    }
+
+    # Índices cuyas conversiones NINGUNA conserva el original -> se eliminarán del mux final.
+    $res.IndicesAEliminar = @($conservar.Keys | Where-Object { -not $conservar[$_] } | ForEach-Object { [int]$_ })
+    Write-DiagPaso "Conversion audio manual: FIN (nuevas=$($res.Nuevos.Count) eliminar=$($res.IndicesAEliminar.Count))"
+    return $res
+}
+
 # Extrae pistas PGS para OCR manual. NO hace pausa ni preguntas (se gestiona fuera).
 function Invoke-ExtraccionPGS($origenPistas, $idiomasSubsMantener = $null, $prefijoArchivo = "") {
     # Extrae los PGS de un archivo a ficheros .sup. Devuelve el nº de PGS extraídos.
@@ -3354,22 +3436,13 @@ foreach ($g in $grupos) {
 }
 Write-Progress -Activity "Comprobando audio DTS en el lote" -Completed
 
+# La conversión DTS automática se RETIRÓ: ahora el usuario convierte cualquier audio (DTS
+# incluido) manualmente desde la GUI («Convertir audio»), que envía ConversionesAudioManual /
+# ConversionesPorArchivo. Por eso el modo automático queda SIEMPRE en NUNCA (inerte): la pista
+# DTS se conserva tal cual salvo que el usuario pida convertirla.
+$modoConversionDTS = "NUNCA"
 if ($hayDTS) {
-    Write-Host "   -> Detectado audio DTS en $archivosConDTS archivo(s) del lote." -ForegroundColor DarkGray
-    $cfgDTS = Get-CfgGui "ModoConversionDTS"
-    if ("$cfgDTS" -in @("SIEMPRE", "NUNCA", "PREGUNTAR")) {
-        $modoConversionDTS = "$cfgDTS"
-        Write-Host "   [GUI] Conversión DTS -> E-AC3: $modoConversionDTS (configuración)." -ForegroundColor DarkGray
-    } else {
-        $modoConversionDTS = Mostrar-Menu "¿Convertir pistas DTS a E-AC3?" @(
-            @{Nombre="Sí, siempre que se detecte DTS sin AC3/E-AC3 ya presente"; Valor="SIEMPRE"},
-            @{Nombre="No, conservar el audio DTS original"; Valor="NUNCA"},
-            @{Nombre="Preguntar para cada archivo"; Valor="PREGUNTAR"}
-        )
-    }
-} else {
-    Write-Host "   -> Ningún archivo del lote tiene audio DTS. Saltando pregunta de conversión." -ForegroundColor DarkGray
-    $modoConversionDTS = "NUNCA"
+    Write-Host "   -> Detectado audio DTS en $archivosConDTS archivo(s) del lote (conversión ahora es manual desde la GUI)." -ForegroundColor DarkGray
 }
 
 # Pre-escaneo de pistas con idioma 'und' (audio y subtítulo): si las hay, preguntar UNA vez
@@ -3580,7 +3653,16 @@ foreach ($grupo in $grupos) {
         if ($cfgDPA -and $archivoPrincipal -and ($cfgDPA.PSObject.Properties.Name -contains $archivoPrincipal.Name)) { $pfDec = $cfgDPA.$($archivoPrincipal.Name) }
         $modoDTSArchivo  = if ($pfDec -and "$($pfDec.Dts)" -in @("SIEMPRE", "NUNCA", "PREGUNTAR")) { "$($pfDec.Dts)" } else { $modoConversionDTS }
         $defAudioArchivo = if ($pfDec -and "$($pfDec.DefAudio)" -in @("DOLBY", "DTS")) { "$($pfDec.DefAudio)" } else { $defaultPreferidoAudio }
-        if ($pfDec) { Write-Host "   [GUI] Decisiones propias de esta película: DTS=$modoDTSArchivo, audio-def=$defAudioArchivo." -ForegroundColor DarkGray }
+        if ($pfDec) { Write-Host "   [GUI] Decisiones propias de esta película: audio-def=$defAudioArchivo." -ForegroundColor DarkGray }
+        # Conversiones de audio manuales para ESTE archivo: por-película si existe, si no la global.
+        $convAudioEste = @()
+        $cfgConvArch = Get-CfgGui "ConversionesPorArchivo"
+        if ($cfgConvArch -and $archivoPrincipal -and ($cfgConvArch.PSObject.Properties.Name -contains $archivoPrincipal.Name)) {
+            $convAudioEste = @($cfgConvArch.$($archivoPrincipal.Name))
+        } else {
+            $cfgConvGlobal = Get-CfgGui "ConversionesAudioManual"
+            if ($cfgConvGlobal) { $convAudioEste = @($cfgConvGlobal) }
+        }
         $global:idxGrupoGui++
         # Base de progreso de este archivo: el avance corre dentro de su "porción" (1/total).
         $global:pctBaseGui = if ($global:totalGruposGui -gt 0) { [int](100 * ($global:idxGrupoGui - 1) / $global:totalGruposGui) } else { 0 }
@@ -3851,6 +3933,27 @@ foreach ($grupo in $grupos) {
                 }
             }
             $audiosOrdenados = $audiosFiltrados
+        }
+
+        # --- Conversiones de audio manuales (GUI) ---
+        # Se aplican DESPUÉS de la selección/orden: el usuario eligió pistas concretas, así que no
+        # compiten por el scoring. Genera las pistas convertidas (externas), elimina las originales
+        # que NO se conservan, e inserta las nuevas reordenando con el mismo criterio (idioma/familia).
+        if (@($convAudioEste).Count -gt 0) {
+            $rcConv = Invoke-ConversionAudioManual $convAudioEste $archivoPrincipal
+            $archivosBorrables += $rcConv.Borrables
+            if (@($rcConv.IndicesAEliminar).Count -gt 0) {
+                $antesAud = $audiosOrdenados.Count
+                $audiosOrdenados = @($audiosOrdenados | Where-Object {
+                    -not ($_.Origen -eq "Interno" -and (@($rcConv.IndicesAEliminar) -contains [int]$_.ID))
+                })
+                $quit = $antesAud - $audiosOrdenados.Count
+                if ($quit -gt 0) { Write-Host "   [conversión audio] $quit pista(s) original(es) sustituida(s) por su versión convertida." -ForegroundColor DarkGray }
+            }
+            if (@($rcConv.Nuevos).Count -gt 0) {
+                $audiosOrdenados = Format-Audios (@($audiosOrdenados) + @($rcConv.Nuevos))
+                Write-Host "   [conversión audio] $(@($rcConv.Nuevos).Count) pista(s) convertida(s) añadida(s) al archivo final." -ForegroundColor Green
+            }
         }
 
 

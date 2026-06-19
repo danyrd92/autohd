@@ -915,15 +915,16 @@ $xaml = @'
                 <Button x:Name="btnTabProyADer" Style="{StaticResource GhostMini}" Grid.Column="2" Content="▶" Margin="3,0,0,0" VerticalAlignment="Bottom" Visibility="Collapsed"/>
               </Grid>
             </StackPanel>
-            <Border x:Name="cardDTS" Style="{StaticResource Card}">
+            <Border x:Name="cardConvAudio" Style="{StaticResource Card}">
               <StackPanel>
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                  <TextBlock Style="{StaticResource H}" Text="Conversión DTS → E-AC3"/>
-                  <TextBlock x:Name="bdgDTS" Style="{StaticResource Bdg}" Grid.Column="1"/>
+                  <TextBlock Style="{StaticResource H}" Text="Convertir audio"/>
+                  <TextBlock x:Name="bdgConvAudio" Style="{StaticResource Bdg}" Grid.Column="1"/>
                 </Grid>
-                <TextBlock Style="{StaticResource D}" Text="Genera una pista E-AC3 (1024 kbps, delay preservado) para los idiomas que solo tengan DTS, por compatibilidad con reproductores sin soporte DTS."/>
-                <WrapPanel x:Name="chDTS" Margin="0,11,0,-8"/>
+                <TextBlock Style="{StaticResource D}" Text="Elige una pista y conviértela al formato que quieras (DD+, DD, AAC). Las opciones se adaptan a los canales de la pista (2.0, 5.1, 7.1). Puedes añadir varias conversiones; con «Mantener original» decides si la pista de origen se conserva o se sustituye. El delay (sincronía) se preserva."/>
+                <StackPanel x:Name="panConvFilas" Margin="0,12,0,0"/>
+                <Button x:Name="btnConvAdd" Style="{StaticResource Ghost}" Content="+ Añadir conversión" HorizontalAlignment="Left" Margin="0,4,0,0"/>
               </StackPanel>
             </Border>
             <Border x:Name="cardDefAudio" Style="{StaticResource Card}">
@@ -1370,9 +1371,9 @@ $refs = @("txtCarpeta","btnExaminar","lblResumen","panListado","imgLogo","panLog
           "chModoLote","chOriginales","chSufijo","chReprocesar",
           "chTorrent","panTorrentDatos","txtAnnounce","panPackNombre","txtPackNombre",
           "txtSalidaArchivo","btnSalidaArchivo","txtSalidaTorrent","btnSalidaTorrent","lblSalidaTorrent",
-          "bdgModoLote","bdgReprocesar","bdgDTS","bdgDefAudio","bdgUndAudio","bdgUndSub",
+          "bdgModoLote","bdgReprocesar","bdgConvAudio","bdgDefAudio","bdgUndAudio","bdgUndSub",
           "bdgFiltro","bdgSubsUnicos","bdgPGS","lblSugerencia",
-          "cardModoLote","cardReprocesar","cardDTS","cardDefAudio","cardUndAudio","cardUndSub",
+          "cardModoLote","cardReprocesar","cardConvAudio","panConvFilas","btnConvAdd","cardDefAudio","cardUndAudio","cardUndSub",
           "cardFiltro","cardSubsUnicos","cardPGS","phAudio","phSubs","panUndAudio","panUndSub",
           "swProyecto","panProyectoDatos","txtTitulo","txtAno","swSerie",
           "panProyTabs","panTabsProy","scrTabsProy","btnTabProyIzq","btnTabProyDer","cardCapturasProy","chCapturasProy",
@@ -1380,7 +1381,7 @@ $refs = @("txtCarpeta","btnExaminar","lblResumen","panListado","imgLogo","panLog
           "panProyTabsS","panTabsProyS","scrTabsProyS","btnTabProySIzq","btnTabProySDer",
           "chOrigen","panWeb","chWebTipo","cmbPlataforma","txtPlataformaOtra",
           "panFisico","cmbFormato","txtFormatoOtro","txtEtiquetas","swAplicarTodos",
-          "chDTS","chDefAudio",
+          "chDefAudio",
           "chFiltro","wrapIdiomas","panSubsUnicos","chExtraerPGS","chConservarPGS",
           "lblEstado","btnIniciar","btnReset","btnConsola",
           "panProgreso","barProgreso","lblProgreso","lblProgresoPct",
@@ -1610,10 +1611,6 @@ Add-ChipGroup $ui.chOrigen "origen" @(
 ) 0 { Actualizar-Proyecto }
 Add-ChipGroup $ui.chWebTipo "webTipo" @(@{T="WEB-DL"; V="WEB-DL"}, @{T="WEBRip"; V="WEBRip"})
 
-Add-ChipGroup $ui.chDTS "dts" @(
-    @{T="No convertir nunca"; V="NUNCA"},
-    @{T="Convertir siempre"; V="SIEMPRE"}
-)
 Add-ChipGroup $ui.chDefAudio "defAudio" @(
     @{T="Dolby (DD+ / TrueHD / DD)"; V="DOLBY"},
     @{T="DTS (DTS-HD MA / DTS)"; V="DTS"}
@@ -1678,7 +1675,10 @@ $scanWorker = {
                         EsHDR  = ("$($s.color_transfer)" -match "smpte2084|arib-std-b67")
                     }
                 } elseif ($tipo -eq "audio") {
-                    $fila.Audios += @{ Index = [int]"0$($s.index)"; Codec = "$($s.codec_name)"; Profile = "$($s.profile)"; Lang = $lang; Title = $title; Forced = $forced }
+                    $canales = [int]"0$($s.channels)"
+                    $chLayout = ""
+                    if ($s.PSObject.Properties.Name -contains "channel_layout") { $chLayout = "$($s.channel_layout)" }
+                    $fila.Audios += @{ Index = [int]"0$($s.index)"; Codec = "$($s.codec_name)"; Profile = "$($s.profile)"; Lang = $lang; Title = $title; Forced = $forced; Channels = $canales; ChannelLayout = $chLayout }
                 } elseif ($tipo -eq "subtitle") {
                     $fila.Subs += @{ Index = [int]"0$($s.index)"; Codec = "$($s.codec_name)"; Lang = $lang; Title = $title; Forced = $forced
                                      EsPGS = ("$($s.codec_name)" -match "pgs") }
@@ -1728,12 +1728,13 @@ function Sugerir-Proyecto($nombres) {
 # sin badges. Las tarjetas de pistas 'und' solo existen con análisis (listan pistas
 # concretas), así que arrancan ocultas.
 function Reset-Adaptacion {
-    foreach ($b in @("bdgModoLote","bdgReprocesar","bdgDTS","bdgDefAudio","bdgUndAudio","bdgUndSub","bdgFiltro","bdgSubsUnicos","bdgPGS")) {
+    foreach ($b in @("bdgModoLote","bdgReprocesar","bdgConvAudio","bdgDefAudio","bdgUndAudio","bdgUndSub","bdgFiltro","bdgSubsUnicos","bdgPGS")) {
         Set-Badge $b ""
     }
-    foreach ($c in @("cardModoLote","cardReprocesar","cardDTS","cardDefAudio","cardFiltro","cardSubsUnicos","cardPGS")) {
+    foreach ($c in @("cardModoLote","cardReprocesar","cardConvAudio","cardDefAudio","cardFiltro","cardSubsUnicos","cardPGS")) {
         $ui[$c].Visibility = "Visible"
     }
+    $ui.panConvFilas.Children.Clear(); $script:convRows = @(); $script:convTrackOpts = @()
     foreach ($c in @("cardUndAudio","cardUndSub","phAudio","phSubs")) {
         $ui[$c].Visibility = "Collapsed"
     }
@@ -1825,6 +1826,230 @@ function Construir-FilasUnd($panel, $pistas, $tipo) {
         $script:undRows += [PSCustomObject]@{ Archivo = $p.Archivo; Id = $p.Id; Tipo = $tipo; Combo = $cmb }
     }
 }
+
+# =========================================================================
+# CONVERSOR DE AUDIO MANUAL (por pista) — sustituye a la antigua conversión DTS.
+# Tarjeta con N filas; cada fila = una pista de origen -> un formato destino, con
+# su interruptor «Mantener original». El segundo selector es DINÁMICO según los
+# canales de la pista (2.0/5.1/7.1). Estado en $script:convRows; se serializa a
+# $cfg.ConversionesAudioManual y se guarda por pestaña en modo heterogéneo.
+# =========================================================================
+$script:convRows = @()        # filas activas (objetos UI)
+$script:convTrackOpts = @()   # opciones del selector de origen (pistas del archivo representativo)
+
+# Nombre comercial del códec de una pista de origen.
+function Get-CodecComercial($codec, $profile) {
+    switch -Regex ("$codec") {
+        "^eac3$"   { return "DD+" }
+        "^ac3$"    { return "DD" }
+        "^truehd$" { return "TrueHD" }
+        "^dts$"    { if ("$profile" -match "MA") { return "DTS-HD MA" } else { return "DTS" } }
+        "^aac$"    { return "AAC" }
+        "^flac$"   { return "FLAC" }
+        "^opus$"   { return "Opus" }
+        default    { return ("$codec").ToUpper() }
+    }
+}
+# Nombre de disposición de canales a partir del nº de canales.
+function Get-NombreLayout($canales) {
+    switch ([int]$canales) {
+        1 { return "1.0" }
+        2 { return "2.0" }
+        6 { return "5.1" }
+        8 { return "7.1" }
+        default { return "$canales ch" }
+    }
+}
+# Opciones de destino DINÁMICAS según los canales de la pista de origen.
+# Devuelve lista de @{T=etiqueta; V="codec|canales|bitrate"}.
+function Get-OpcionesDestino($canales) {
+    $c = [int]$canales
+    # Layouts destino: el mismo que el origen; si es 7.1 (8 ch), también 5.1 (downmix).
+    $layouts = @()
+    if     ($c -ge 8) { $layouts = @(8, 6) }   # 7.1 -> 7.1 y 5.1
+    elseif ($c -ge 6) { $layouts = @(6) }      # 5.1 -> 5.1
+    elseif ($c -le 2) { $layouts = @(2) }      # 2.0/1.0 -> 2.0
+    else              { $layouts = @($c, 2) }  # raros (5.0, 6.1): su nº y 2.0
+    # Bitrate (kbps) por (códec, canales).
+    $brFn = {
+        param($cod, $ch)
+        switch ("$cod") {
+            "ac3"  { if ($ch -le 2) { 256 } else { 640 } }
+            "eac3" { if ($ch -le 2) { 256 } elseif ($ch -le 6) { 1024 } else { 1280 } }
+            "aac"  { if ($ch -le 2) { 256 } elseif ($ch -le 6) { 640 } else { 896 } }
+            default { 256 }
+        }
+    }
+    # Familias comerciales; orden DD+, DD, AAC. LÍMITES REALES del codificador ffmpeg:
+    # DD+ (eac3) y DD (ac3) NO pasan de 5.1 (6 canales) — el encoder rechaza 7.1. El único
+    # destino 7.1 posible con estos formatos es AAC (hasta 8 canales).
+    $codecs = @(
+        @{ Cod = "eac3"; Nom = "DD+"; MaxCh = 6 },
+        @{ Cod = "ac3";  Nom = "DD";  MaxCh = 6 },
+        @{ Cod = "aac";  Nom = "AAC"; MaxCh = 8 }
+    )
+    $ops = @()
+    foreach ($ly in $layouts) {
+        foreach ($cd in $codecs) {
+            if ($ly -gt $cd.MaxCh) { continue }
+            $br = & $brFn $cd.Cod $ly
+            $ops += @{ T = "$($cd.Nom) $(Get-NombreLayout $ly)"; V = "$($cd.Cod)|$ly|$br" }
+        }
+    }
+    return $ops
+}
+
+# Rellena el ComboBox de destino con las opciones válidas para una pista de N canales.
+function Llenar-ComboDestino($cmbDest, $canales) {
+    $cmbDest.Items.Clear()
+    $ops = Get-OpcionesDestino $canales
+    foreach ($o in $ops) { [void]$cmbDest.Items.Add($o.T) }
+    $cmbDest.Tag = $ops
+    if ($ops.Count -gt 0) { $cmbDest.SelectedIndex = 0 }
+}
+
+# Añade UNA fila de conversión al panel. $estado opcional = @{Index; Dest; Mant} para restaurar.
+function Add-FilaConv($estado = $null) {
+    if (@($script:convTrackOpts).Count -eq 0) { return }
+    $g = New-Object System.Windows.Controls.Grid
+    $g.Margin = [System.Windows.Thickness]::new(0, 0, 0, 9)
+    $col0 = New-Object System.Windows.Controls.ColumnDefinition; $col0.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $col1 = New-Object System.Windows.Controls.ColumnDefinition; $col1.Width = [System.Windows.GridLength]::Auto
+    $col2 = New-Object System.Windows.Controls.ColumnDefinition; $col2.Width = [System.Windows.GridLength]::new(185)
+    $col3 = New-Object System.Windows.Controls.ColumnDefinition; $col3.Width = [System.Windows.GridLength]::Auto
+    $col4 = New-Object System.Windows.Controls.ColumnDefinition; $col4.Width = [System.Windows.GridLength]::Auto
+    foreach ($c in @($col0,$col1,$col2,$col3,$col4)) { [void]$g.ColumnDefinitions.Add($c) }
+
+    # Selector de ORIGEN (pista del vídeo).
+    $cmbO = New-Object System.Windows.Controls.ComboBox
+    $cmbO.Style = $win.Resources["Combo"]
+    $cmbO.VerticalAlignment = "Center"
+    Init-Combo $cmbO $script:convTrackOpts 0
+    [System.Windows.Controls.Grid]::SetColumn($cmbO, 0)
+    [void]$g.Children.Add($cmbO)
+
+    # Flecha.
+    $flecha = New-Object System.Windows.Controls.TextBlock
+    $flecha.Text = "→"; $flecha.FontSize = 15; $flecha.VerticalAlignment = "Center"
+    $flecha.Margin = [System.Windows.Thickness]::new(10, 0, 10, 0)
+    $flecha.Foreground = $win.Resources["SubBrush"]
+    [System.Windows.Controls.Grid]::SetColumn($flecha, 1)
+    [void]$g.Children.Add($flecha)
+
+    # Selector de DESTINO (formato), dinámico.
+    $cmbD = New-Object System.Windows.Controls.ComboBox
+    $cmbD.Style = $win.Resources["Combo"]
+    $cmbD.VerticalAlignment = "Center"
+    [System.Windows.Controls.Grid]::SetColumn($cmbD, 2)
+    [void]$g.Children.Add($cmbD)
+
+    # Interruptor «Mantener original».
+    $sw = New-Object System.Windows.Controls.CheckBox
+    $sw.Style = $win.Resources["Switch"]
+    $sw.Content = "Mantener original"
+    $sw.IsChecked = $true
+    $sw.VerticalAlignment = "Center"
+    $sw.Margin = [System.Windows.Thickness]::new(16, 0, 6, 0)
+    [System.Windows.Controls.Grid]::SetColumn($sw, 3)
+    [void]$g.Children.Add($sw)
+
+    # Botón quitar.
+    $btnX = New-Object System.Windows.Controls.Button
+    $btnX.Style = $win.Resources["GhostMini"]
+    $btnX.Content = "✕"
+    $btnX.VerticalAlignment = "Center"
+    [System.Windows.Controls.Grid]::SetColumn($btnX, 4)
+    [void]$g.Children.Add($btnX)
+
+    # Al cambiar la pista de origen, recalcular las opciones de destino según sus canales.
+    $cmbO.Add_SelectionChanged({
+        $i = $cmbO.SelectedIndex
+        if ($i -lt 0) { return }
+        Llenar-ComboDestino $cmbD ([int]$cmbO.Tag[$i].Channels)
+    }.GetNewClosure())
+
+    # Quitar la fila.
+    $btnX.Add_Click({
+        [void]$ui.panConvFilas.Children.Remove($g)
+        $script:convRows = @($script:convRows | Where-Object { $_.Grid -ne $g })
+    }.GetNewClosure())
+
+    [void]$ui.panConvFilas.Children.Add($g)
+    $fila = [PSCustomObject]@{ Grid = $g; CmbOrigen = $cmbO; CmbDestino = $cmbD; SwMant = $sw }
+    $script:convRows += $fila
+
+    # Poblar destino una primera vez (la selección de origen ya está en 0).
+    Llenar-ComboDestino $cmbD ([int]$script:convTrackOpts[0].Channels)
+
+    # Restaurar estado guardado (pestaña): pista, formato e interruptor.
+    if ($estado) {
+        for ($k = 0; $k -lt @($script:convTrackOpts).Count; $k++) {
+            if ("$($script:convTrackOpts[$k].V)" -eq "$($estado.Index)") { $cmbO.SelectedIndex = $k; break }
+        }
+        if ($estado.Dest) { Set-ComboValor $cmbD $estado.Dest }
+        $sw.IsChecked = [bool]$estado.MantenerOriginal
+    }
+    return $fila
+}
+
+# Reconstruye TODAS las filas de conversión. $estados = lista de @{Index;Dest;Mant} (vacío = 1 fila nueva).
+function Reconstruir-FilasConv($estados = @()) {
+    $ui.panConvFilas.Children.Clear()
+    $script:convRows = @()
+    if (@($script:convTrackOpts).Count -eq 0) { return }
+    $est = @($estados)
+    if ($est.Count -eq 0) { [void](Add-FilaConv) }
+    else { foreach ($e in $est) { [void](Add-FilaConv $e) } }
+}
+
+# Construye el conversor para un ámbito (homogéneo = selección; heterogéneo = archivos de la peli).
+# Toma el PRIMER archivo con audio como representante: en homogéneo todos comparten estructura, y la
+# conversión se aplica por índice de pista a cada archivo procesado.
+function Construir-Conversor($scope) {
+    $rep = @($scope | Where-Object { @($_.Audios).Count -gt 0 } | Select-Object -First 1)
+    if (-not $rep) {
+        $ui.cardConvAudio.Visibility = "Collapsed"
+        $ui.panConvFilas.Children.Clear(); $script:convRows = @(); $script:convTrackOpts = @()
+        return
+    }
+    $script:convTrackOpts = @()
+    foreach ($a in $rep.Audios) {
+        $lng  = ConvCanon $a.Lang $a.Title
+        $nomL = if ($lng -eq "und") { "sin idioma" } else { NombreIdioma $lng }
+        $cc   = Get-CodecComercial $a.Codec $a.Profile
+        $lay  = Get-NombreLayout $a.Channels
+        $script:convTrackOpts += @{ T = "pista $($a.Index) · $nomL · $cc $lay"; V = $a.Index; Channels = $a.Channels; Lang = $lng; Codec = "$($a.Codec)" }
+    }
+    $ui.cardConvAudio.Visibility = "Visible"
+    Reconstruir-FilasConv @()
+    Set-Badge "bdgConvAudio" "$(@($rep.Audios).Count) pista(s) en este vídeo" "muted"
+}
+
+# Lee las filas de conversión actuales como lista de hashtables (para $cfg / snapshot).
+function Leer-ConversionesActuales {
+    $lista = @()
+    foreach ($r in @($script:convRows)) {
+        $idx = Get-ComboValor $r.CmbOrigen
+        $dst = Get-ComboValor $r.CmbDestino
+        if ($null -eq $idx -or [string]::IsNullOrWhiteSpace("$dst")) { continue }   # fila incompleta: ignorar
+        $partes = "$dst" -split "\|"
+        if ($partes.Count -lt 3) { continue }
+        $opO = @($script:convTrackOpts | Where-Object { "$($_.V)" -eq "$idx" } | Select-Object -First 1)
+        $lista += [ordered]@{
+            Index            = [int]$idx
+            Lang             = if ($opO) { "$($opO.Lang)" } else { "" }
+            CodecDestino     = "$($partes[0])"
+            CanalesDestino   = [int]$partes[1]
+            BitrateK         = [int]$partes[2]
+            MantenerOriginal = [bool]$r.SwMant.IsChecked
+            Dest             = "$dst"   # "codec|canales|bitrate" para restaurar la fila
+        }
+    }
+    return $lista
+}
+
+# Wiring del botón «+ Añadir conversión».
+if ($ui.btnConvAdd) { $ui.btnConvAdd.Add_Click({ [void](Add-FilaConv) }) }
 
 # Lista rápida de nombres (feedback inmediato mientras llega el análisis)
 function Actualizar-ListaRapida {
@@ -2088,13 +2313,8 @@ function Aplicar-Analisis($filas) {
     # Tarjetas de audio/subtítulos: en modo HOMOGÉNEO se construyen aquí del agregado; en
     # HETEROGENEO las construye Aplicar-TabActiva por pestaña (con el archivo de cada película).
     if ((Get-ChipValor "modoLote") -ne "HETEROGENEO") {
-    # DTS
-    if ($archivosDTS.Count -gt 0) {
-        $ui.cardDTS.Visibility = "Visible"
-        Set-Badge "bdgDTS" "DTS detectado en $($archivosDTS.Count) de $($sel.Count) archivo(s)" "ok"
-    } else {
-        $ui.cardDTS.Visibility = "Collapsed"
-    }
+    # Conversor de audio (sustituye a la antigua tarjeta DTS)
+    Construir-Conversor $sel
     # Default audio
     switch ($casoDolbyDTS) {
         "SI"   { $ui.cardDefAudio.Visibility = "Visible"; Set-Badge "bdgDefAudio" "Dolby y DTS conviven en el mismo idioma" "ok" }
@@ -2148,7 +2368,7 @@ function Aplicar-Analisis($filas) {
         $ui.cardPGS.Visibility = "Collapsed"
     }
     # Tarjetas de "sección sin nada que configurar"
-    $audioVacio = ($ui.cardDTS.Visibility -ne "Visible") -and ($ui.cardDefAudio.Visibility -ne "Visible") -and ($ui.cardUndAudio.Visibility -ne "Visible")
+    $audioVacio = ($ui.cardConvAudio.Visibility -ne "Visible") -and ($ui.cardDefAudio.Visibility -ne "Visible") -and ($ui.cardUndAudio.Visibility -ne "Visible")
     $ui.phAudio.Visibility = if ($audioVacio) { "Visible" } else { "Collapsed" }
     $subsVacio = ($ui.cardUndSub.Visibility -ne "Visible") -and ($ui.cardFiltro.Visibility -ne "Visible") -and
                  ($ui.cardSubsUnicos.Visibility -ne "Visible") -and ($ui.cardPGS.Visibility -ne "Visible")
@@ -2483,9 +2703,7 @@ function Construir-Adaptacion($selScope) {
     }
     $script:subsAmbiguos = @($ambiguosMap.Values)
     # Aplicación de tarjetas (idéntico criterio que Aplicar-Analisis, ámbito = $selScope)
-    if ($archivosDTS.Count -gt 0) {
-        $ui.cardDTS.Visibility = "Visible"; Set-Badge "bdgDTS" "DTS detectado en $($archivosDTS.Count) de $($selScope.Count) archivo(s)" "ok"
-    } else { $ui.cardDTS.Visibility = "Collapsed" }
+    Construir-Conversor $selScope
     switch ($casoDolbyDTS) {
         "SI"   { $ui.cardDefAudio.Visibility = "Visible"; Set-Badge "bdgDefAudio" "Dolby y DTS conviven en el mismo idioma" "ok" }
         "CONV" { $ui.cardDefAudio.Visibility = "Visible"; Set-Badge "bdgDefAudio" "aplicará si conviertes DTS a E-AC3" "warn" }
@@ -2515,7 +2733,7 @@ function Construir-Adaptacion($selScope) {
         $totPgs = 0; foreach ($f in $selScope) { $totPgs += @($f.Subs | Where-Object { $_.EsPGS }).Count }
         Set-Badge "bdgPGS" "$totPgs pista(s) PGS en $($archivosPGS.Count) archivo(s)" "ok"
     } else { $ui.cardPGS.Visibility = "Collapsed" }
-    $audioVacio = ($ui.cardDTS.Visibility -ne "Visible") -and ($ui.cardDefAudio.Visibility -ne "Visible") -and ($ui.cardUndAudio.Visibility -ne "Visible")
+    $audioVacio = ($ui.cardConvAudio.Visibility -ne "Visible") -and ($ui.cardDefAudio.Visibility -ne "Visible") -and ($ui.cardUndAudio.Visibility -ne "Visible")
     $ui.phAudio.Visibility = if ($audioVacio) { "Visible" } else { "Collapsed" }
     $subsVacio = ($ui.cardUndSub.Visibility -ne "Visible") -and ($ui.cardFiltro.Visibility -ne "Visible") -and
                  ($ui.cardSubsUnicos.Visibility -ne "Visible") -and ($ui.cardPGS.Visibility -ne "Visible")
@@ -2528,7 +2746,7 @@ function Snapshot-DecisionesTab {
     $su = @{}
     foreach ($r in @($script:subsUnicosRows)) { $su["$($r.Cod)|$($r.Fmt)"] = $(if ($r.RbForzado.IsChecked) { "Forzado" } else { "Completo" }) }
     @{
-        Dts = (Get-ChipValor "dts"); DefAudio = (Get-ChipValor "defAudio"); Filtro = (Get-ChipValor "filtro")
+        Conv = (Leer-ConversionesActuales); DefAudio = (Get-ChipValor "defAudio"); Filtro = (Get-ChipValor "filtro")
         FiltroLangs = @($script:chipsIdiomas | Where-Object { $_.IsChecked } | ForEach-Object { "$($_.Tag)" })
         ExtraerPGS = (Get-ChipValor "extraerPGS"); ConservarPGS = (Get-ChipValor "conservarPGS")
         Und = $und; SubsUnicos = $su
@@ -2537,7 +2755,7 @@ function Snapshot-DecisionesTab {
 # Aplica las decisiones guardadas sobre las tarjetas YA reconstruidas (Construir-Adaptacion antes).
 function Restore-DecisionesTab($d) {
     if (-not $d) { return }
-    if ($d.Dts)          { Set-ChipValor "dts" $d.Dts }
+    if ($null -ne $d.Conv) { Reconstruir-FilasConv @($d.Conv) }
     if ($d.DefAudio)     { Set-ChipValor "defAudio" $d.DefAudio }
     if ($d.ExtraerPGS)   { Set-ChipValor "extraerPGS" $d.ExtraerPGS }
     if ($d.ConservarPGS) { Set-ChipValor "conservarPGS" $d.ConservarPGS }
@@ -4404,7 +4622,13 @@ $ui.btnIniciar.Add_Click({
     if (-not [string]::IsNullOrWhiteSpace($ui.txtPackNombre.Text)) { $cfg.TorrentPackNombre = $ui.txtPackNombre.Text.Trim() }
     if (-not [string]::IsNullOrWhiteSpace($ui.txtSalidaArchivo.Text)) { $cfg.CarpetaSalida  = $ui.txtSalidaArchivo.Text.Trim() }
     if (-not [string]::IsNullOrWhiteSpace($ui.txtSalidaTorrent.Text)) { $cfg.CarpetaTorrent = $ui.txtSalidaTorrent.Text.Trim() }
-    $v = Get-ChipValor "dts";          if ($null -ne $v) { $cfg.ModoConversionDTS = $v }
+    # Conversor de audio manual (sustituye a ModoConversionDTS). Lista global; en heterogéneo
+    # se añade además ConversionesPorArchivo (por película) más abajo, que tiene prioridad.
+    $convGlobal = @(Leer-ConversionesActuales | ForEach-Object {
+        [ordered]@{ Index = $_.Index; Lang = $_.Lang; CodecDestino = $_.CodecDestino
+                    CanalesDestino = $_.CanalesDestino; BitrateK = $_.BitrateK; MantenerOriginal = $_.MantenerOriginal }
+    })
+    if ($convGlobal.Count -gt 0) { $cfg.ConversionesAudioManual = $convGlobal }
     $v = Get-ChipValor "defAudio";     if ($null -ne $v) { $cfg.DefaultPreferidoAudio = $v }
     # Subs únicos: decisión POR sub (idioma+formato), una por cada sección de la GUI.
     $mapaSubs = [ordered]@{}
@@ -4484,18 +4708,24 @@ $ui.btnIniciar.Add_Click({
         }
         if ($mapaProy.Count -gt 0) { $cfg.ProyectoPorArchivo = $mapaProy }
 
-        # Decisiones de audio/subtítulos POR ARCHIVO (DTS, audio por defecto, filtro, PGS) + pistas
-        # und (recopiladas de TODAS las pestañas) + subs únicos por archivo. Reemplazan a las globales.
-        $mapaDec = [ordered]@{}; $undTodos = @(); $mapaSU = [ordered]@{}
+        # Decisiones de audio/subtítulos POR ARCHIVO (audio por defecto, filtro, PGS) + conversiones
+        # de audio por película + pistas und (de TODAS las pestañas) + subs únicos. Reemplazan a las globales.
+        $mapaDec = [ordered]@{}; $undTodos = @(); $mapaSU = [ordered]@{}; $mapaConv = [ordered]@{}
         foreach ($tb in @($script:tabsProy)) {
             $d = $tb.Decisiones
             if (-not $d) { continue }
             $filtroEf = if ($d.Filtro -eq "PERSONALIZADA") { @($d.FiltroLangs) } else { $d.Filtro }
             $dec = [ordered]@{
-                Dts = $d.Dts; DefAudio = $d.DefAudio; Filtro = $filtroEf
+                DefAudio = $d.DefAudio; Filtro = $filtroEf
                 ExtraerPGS = [bool]$d.ExtraerPGS; ConservarPGS = $d.ConservarPGS
             }
             foreach ($arch in @($tb.Archivos)) { $mapaDec[$arch] = $dec }
+            # Conversiones de audio de esta película (formato motor, sin el campo GUI 'Dest').
+            $convPeli = @(@($d.Conv) | Where-Object { $_ } | ForEach-Object {
+                [ordered]@{ Index = $_.Index; Lang = $_.Lang; CodecDestino = $_.CodecDestino
+                            CanalesDestino = $_.CanalesDestino; BitrateK = $_.BitrateK; MantenerOriginal = $_.MantenerOriginal }
+            })
+            if ($convPeli.Count -gt 0) { foreach ($arch in @($tb.Archivos)) { $mapaConv[$arch] = $convPeli } }
             if ($d.Und) {
                 foreach ($k in $d.Und.Keys) {
                     if ($null -eq $d.Und[$k]) { continue }
@@ -4510,6 +4740,7 @@ $ui.btnIniciar.Add_Click({
             }
         }
         if ($mapaDec.Count -gt 0) { $cfg.DecisionesPorArchivo = $mapaDec }
+        if ($mapaConv.Count -gt 0) { $cfg.ConversionesPorArchivo = $mapaConv }       # conversiones por película
         if ($undTodos.Count -gt 0) { $cfg.IdiomasUndPistas = @($undTodos) }          # reemplaza al global
         if ($mapaSU.Count -gt 0)  { $cfg.SubsUnicosPorArchivo = $mapaSU }
     }
@@ -5193,13 +5424,13 @@ if ($script:modoTest) {
         # Análisis simulado: Matrix con DTS + sub und; Friends con audio und + PGS; Interstellar 4 idiomas de subs.
         $script:ultimoScan = @(
             @{ Nombre=$nM; Ruta="C:\v\$nM"; Error=$null; Video=@{Codec="hevc";Height=2160;EsDV=$false;EsHDR=$true}
-               Audios=@(@{Index=0;Codec="dts";Profile="MA";Lang="eng";Title="";Forced=$false}, @{Index=1;Codec="eac3";Profile="";Lang="spa";Title="";Forced=$false})
+               Audios=@(@{Index=0;Codec="dts";Profile="MA";Lang="eng";Title="";Forced=$false;Channels=6}, @{Index=1;Codec="eac3";Profile="";Lang="spa";Title="";Forced=$false;Channels=6})
                Subs=@(@{Index=2;Codec="subrip";Lang="und";Title="";Forced=$false;EsPGS=$false}) }
             @{ Nombre=$nF; Ruta="C:\v\$nF"; Error=$null; Video=@{Codec="h264";Height=1080;EsDV=$false;EsHDR=$false}
-               Audios=@(@{Index=0;Codec="aac";Profile="";Lang="und";Title="";Forced=$false})
+               Audios=@(@{Index=0;Codec="aac";Profile="";Lang="und";Title="";Forced=$false;Channels=2})
                Subs=@(@{Index=1;Codec="hdmv_pgs_subtitle";Lang="spa";Title="";Forced=$false;EsPGS=$true}) }
             @{ Nombre=$nI; Ruta="C:\v\$nI"; Error=$null; Video=@{Codec="hevc";Height=1080;EsDV=$false;EsHDR=$false}
-               Audios=@(@{Index=0;Codec="eac3";Profile="";Lang="eng";Title="";Forced=$false})
+               Audios=@(@{Index=0;Codec="truehd";Profile="";Lang="eng";Title="";Forced=$false;Channels=8})
                Subs=@(@{Index=1;Codec="subrip";Lang="fre";Title="";Forced=$false;EsPGS=$false}, @{Index=2;Codec="subrip";Lang="ger";Title="";Forced=$false;EsPGS=$false}, @{Index=3;Codec="subrip";Lang="ita";Title="";Forced=$false;EsPGS=$false}, @{Index=4;Codec="subrip";Lang="spa";Title="";Forced=$false;EsPGS=$false}) }
         )
         $script:gruposProy = @(
@@ -5209,21 +5440,21 @@ if ($script:modoTest) {
         )
         Set-ChipValor "modoLote" "HETEROGENEO"
         Actualizar-ModoLote
-        $rA = "tab Matrix (activa): cardDTS=$($ui.cardDTS.Visibility) cardUndSub=$($ui.cardUndSub.Visibility) cardPGS=$($ui.cardPGS.Visibility) cardFiltro=$($ui.cardFiltro.Visibility)"
-        # Editar DTS en Matrix, ir a Friends (debe verse PGS), volver y comprobar que DTS se conserva.
-        Set-ChipValor "dts" "SIEMPRE"
+        $rA = "tab Matrix (activa): cardConvAudio=$($ui.cardConvAudio.Visibility) nOpcsOrigen=$(@($script:convTrackOpts).Count) cardUndSub=$($ui.cardUndSub.Visibility) cardPGS=$($ui.cardPGS.Visibility)"
+        # Añadir una conversión en Matrix, ir a Friends (debe verse PGS), volver y comprobar que se conserva.
+        [void](Add-FilaConv)
         Cambiar-TabProy 1
-        $rB = "tab Friends: cardDTS=$($ui.cardDTS.Visibility) cardPGS=$($ui.cardPGS.Visibility) cardUndAudio=$($ui.cardUndAudio.Visibility)"
+        $rB = "tab Friends: cardConvAudio=$($ui.cardConvAudio.Visibility) nFilasConv=$(@($script:convRows).Count) cardPGS=$($ui.cardPGS.Visibility)"
         Cambiar-TabProy 2
-        $rC = "tab Interstellar: cardFiltro=$($ui.cardFiltro.Visibility) cardDTS=$($ui.cardDTS.Visibility)"
+        $rC = "tab Interstellar: nOpcsOrigen=$(@($script:convTrackOpts).Count) nFilasConv=$(@($script:convRows).Count) cardFiltro=$($ui.cardFiltro.Visibility)"
         Cambiar-TabProy 0
-        $rD = "vuelvo a Matrix: dts=$(Get-ChipValor 'dts') cardDTS=$($ui.cardDTS.Visibility) (esperado SIEMPRE / Visible)"
-        # Gathering del config por archivo (replica la lógica de envío): DTS y und por película.
+        $rD = "vuelvo a Matrix: nFilasConv=$(@($script:convRows).Count) (esperado 2: la base + la añadida)"
+        # Gathering del config por archivo (replica la lógica de envío): conversiones y und por película.
         $script:tabsProy[$script:tabProyActual].Decisiones = Snapshot-DecisionesTab
         $resumen = @($script:tabsProy | ForEach-Object {
             $d = $_.Decisiones
             $nund = if ($d.Und) { @($d.Und.Keys).Count } else { 0 }
-            "$($_.Principal.Substring(0,12))…: DTS=$($d.Dts) undPistas=$nund"
+            "$($_.Principal.Substring(0,12))…: Conv=$(@($d.Conv).Count) undPistas=$nund"
         }) -join " | "
         Write-Host "TEST_HET_AV:`n  $rA`n  $rB`n  $rC`n  $rD`n  config: $resumen"
         $r0 = "tras reconstruir: nTabs=$(@($script:tabsProy).Count) activa=$($script:tabProyActual) titulo='$($ui.txtTitulo.Text)' año='$($ui.txtAno.Text)' caps=$(Get-ChipValor 'capturasProy')"
