@@ -1,7 +1,7 @@
 {
   "version": "1.2.0",
   "fecha": "2026-06-19",
-  "notas": "Nuevo conversor de audio por pista (seccion Audio): elige cualquier pista del video y conviertela al formato que quieras (DD+, DD, AAC), con opciones que se adaptan a sus canales (2.0/5.1/7.1). Puedes encadenar varias conversiones y en cada una decidir si mantener la pista original o sustituirla; el delay/sincronia se preserva. Sustituye a la antigua conversion automatica de DTS: ahora el DTS se convierte a mano como una pista mas. Nota tecnica: DD+ y DD llegan hasta 5.1 (limite del codificador), el 7.1 se ofrece via AAC.",
+  "notas": "Nuevo conversor de audio: convierte cualquier pista a DD+, DD o AAC, con opciones segun sus canales (2.0/5.1/7.1) y eligiendo si mantener o sustituir la original. Reemplaza a la conversion DTS automatica (ahora el DTS tambien se convierte a mano).",
   "archivos": [
     "VERSION.txt",
     "HDZ-GUI.ps1",

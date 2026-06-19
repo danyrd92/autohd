@@ -5070,7 +5070,9 @@ function Show-DialogoHDZ {
         <TextBlock x:Name="lblIcono" FontSize="22" VerticalAlignment="Center" Margin="0,0,12,0" DockPanel.Dock="Left"/>
         <TextBlock x:Name="lblTitulo" Foreground="#EDEDEF" FontSize="16.5" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap"/>
       </DockPanel>
-      <TextBlock x:Name="lblCuerpo" Foreground="#9C9CA8" FontSize="13.5" TextWrapping="Wrap" LineHeight="21" Margin="0,0,0,24"/>
+      <ScrollViewer MaxHeight="360" VerticalScrollBarVisibility="Auto" Margin="0,0,0,24">
+        <TextBlock x:Name="lblCuerpo" Foreground="#9C9CA8" FontSize="13.5" TextWrapping="Wrap" LineHeight="21" Margin="0,0,8,0"/>
+      </ScrollViewer>
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
         <Button x:Name="btnNo" Style="{StaticResource G}" Margin="0,0,10,0"/>
         <Button x:Name="btnSi" Style="{StaticResource P}"/>
