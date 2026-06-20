@@ -1,7 +1,7 @@
 {
-  "version": "1.2.2",
+  "version": "1.2.3",
   "fecha": "2026-06-20",
-  "notas": "Nuevo host de imagenes: imgbox. No necesita clave y agrupa las capturas de cada release en una galeria, titulada solo con el Titulo y el Año de la pelicula/serie. En la descripcion las capturas se insertan como miniatura enlazada a la imagen completa. Opcionalmente puedes usar tu cuenta de imgbox (usuario y contraseña, guardados solo en tu equipo, con la contraseña cifrada). freeimage e imgbb siguen funcionando igual que antes.",
+  "notas": "Arreglo: ahora puedes elegir archivos de unidades de red (discos en red) en los dialogos de Examinar y Añadir imagenes. El programa ya no se ejecuta como administrador (no lo necesita); si se abria elevado tras instalar, Windows ocultaba las unidades de red mapeadas. Ahora se relanza solo sin privilegios. Incluye tambien el host imgbox de la version anterior (galeria por release con miniaturas).",
   "archivos": [
     "VERSION.txt",
     "HDZ-GUI.ps1",

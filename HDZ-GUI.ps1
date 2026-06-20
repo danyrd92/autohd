@@ -35,6 +35,32 @@ $rutaTorrentMod = Join-Path $PSScriptRoot "HDZ-Torrent.ps1"
 $rutaAjustes = Join-Path $env:APPDATA "HDZ-GUI.settings.json"
 $script:modoTest = ($env:HDZ_GUI_TEST -eq "1")
 
+# --- Sin privilegios de administrador --------------------------------------
+# El programa NO necesita permisos de administrador. Si se ha lanzado elevado (p. ej. el
+# auto-arranque justo tras instalar, que hereda el token del instalador), Windows OCULTA las
+# unidades de red mapeadas a los procesos elevados → no se podrían elegir discos en red en los
+# diálogos de archivo. Por eso, si detectamos elevación, nos relanzamos SIN elevar (vía el
+# .vbs lanzado por el Explorador, que corre con el token normal del usuario) y cerramos esta
+# instancia. Red de seguridad: si el relanzamiento no es posible, seguimos en marcha igualmente.
+if (-not $script:modoTest) {
+    try {
+        $idActual = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $prActual = New-Object Security.Principal.WindowsPrincipal($idActual)
+        if ($prActual.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)) {
+            $vbsLanz = Join-Path $PSScriptRoot "HDZ Studio.vbs"
+            # Guarda anti-bucle: si ya intentamos de-elevar hace muy poco (caso raro de Explorador
+            # también elevado), no reintentamos en bucle; seguimos abiertos aunque sea con privilegios.
+            $flag = Join-Path $env:TEMP "hdz_deelev.flag"
+            $reciente = (Test-Path -LiteralPath $flag) -and (((Get-Date) - (Get-Item -LiteralPath $flag).LastWriteTime).TotalSeconds -lt 25)
+            if (-not $reciente -and (Test-Path -LiteralPath $vbsLanz)) {
+                Set-Content -LiteralPath $flag -Value (Get-Date).Ticks -Encoding ASCII
+                Start-Process "explorer.exe" -ArgumentList ('"' + $vbsLanz + '"')
+                exit
+            }
+        }
+    } catch {}
+}
+
 # Módulo compartido de creación de torrents (lo usa también HDZnew.ps1)
 if (Test-Path -LiteralPath $rutaTorrentMod) { . $rutaTorrentMod }
 
