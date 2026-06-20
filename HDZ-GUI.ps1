@@ -1264,11 +1264,27 @@ $xaml = @'
             <Border Style="{StaticResource Card}">
               <StackPanel>
                 <TextBlock Style="{StaticResource H}" Text="Host de imágenes"/>
-                <TextBlock Style="{StaticResource D}" Text="freeimage.host no necesita clave. imgbb requiere una clave gratuita (imgbb.com → About → API)."/>
+                <TextBlock Style="{StaticResource D}" Text="freeimage.host no necesita clave. imgbb requiere una clave gratuita (imgbb.com → About → API). imgbox no necesita clave: agrupa las capturas en una galería; opcionalmente puedes usar tu cuenta."/>
                 <WrapPanel x:Name="chHostImg" Margin="0,11,0,0"/>
                 <StackPanel x:Name="panImgbbKey" Visibility="Collapsed">
                   <TextBlock Style="{StaticResource Lbl}" Text="Clave API de imgbb"/>
                   <TextBox x:Name="cfgImgbbKey" Style="{StaticResource Input}" Width="420" HorizontalAlignment="Left"/>
+                </StackPanel>
+                <StackPanel x:Name="panImgboxCuenta" Visibility="Collapsed" Margin="0,4,0,0">
+                  <TextBlock Style="{StaticResource D}" Text="Cuenta imgbox (opcional). Si la rellenas, las galerías quedan en «Mis galerías» de tu cuenta. Si la dejas vacía, se sube de forma anónima (igual con galería). Se guarda SOLO en tu equipo; la contraseña, cifrada."/>
+                  <Grid Margin="0,6,0,0">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="16"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                      <TextBlock Style="{StaticResource Lbl}" Text="Usuario imgbox (opcional)"/>
+                      <TextBox x:Name="cfgImgboxUser" Style="{StaticResource Input}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                      <TextBlock Style="{StaticResource Lbl}" Text="Contraseña imgbox (opcional)"/>
+                      <PasswordBox x:Name="cfgImgboxPass" Height="34" Padding="9,0" VerticalContentAlignment="Center"
+                                   Background="{StaticResource FieldBrush}" Foreground="{StaticResource TextBrush}"
+                                   BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1" CaretBrush="{StaticResource TextBrush}"/>
+                    </StackPanel>
+                  </Grid>
                 </StackPanel>
               </StackPanel>
             </Border>
@@ -1401,7 +1417,8 @@ $refs = @("txtCarpeta","btnExaminar","lblResumen","panListado","imgLogo","panLog
           "panSubProgreso","barSubProgreso","lblSubProgreso","lblSubProgresoPct",
           "upAnon","upPersonal","upAudioEd","upProper","upDV","upHDR10P","upHDR10","upModQueue",
           "upNfo","btnNfoExaminar","btnSubir",
-          "cfgTrackerUrl","cfgTrackerToken","chHostImg","panImgbbKey","cfgImgbbKey","cfgTmdbKey")
+          "cfgTrackerUrl","cfgTrackerToken","chHostImg","panImgbbKey","cfgImgbbKey","cfgTmdbKey",
+          "panImgboxCuenta","cfgImgboxUser","cfgImgboxPass")
 $ui = @{}
 foreach ($r in $refs) { $ui[$r] = $win.FindName($r) }
 
@@ -3023,10 +3040,18 @@ Init-Combo $ui.upCategoria $catsHDZ 0
 Init-Combo $ui.upTipo $tiposHDZ 0
 Init-Combo $ui.upResolucion $resolucionesHDZ 0
 Init-Combo $ui.cmbNumCapturas @(@{T="3";V=3},@{T="4";V=4},@{T="5";V=5},@{T="6";V=6},@{T="8";V=8},@{T="10";V=10}) 3
+# Muestra/oculta los paneles de cada host según el seleccionado (clave imgbb / cuenta imgbox).
+function Actualizar-PanelHost {
+    if (-not $ui) { return }
+    $h = Get-ChipValor "hostImg"
+    if ($ui.panImgbbKey)     { $ui.panImgbbKey.Visibility     = if ($h -eq "IMGBB")  { "Visible" } else { "Collapsed" } }
+    if ($ui.panImgboxCuenta) { $ui.panImgboxCuenta.Visibility = if ($h -eq "IMGBOX") { "Visible" } else { "Collapsed" } }
+}
 Add-ChipGroup $ui.chHostImg "hostImg" @(
     @{T="freeimage.host (sin clave)"; V="FREEIMAGE"},
-    @{T="imgbb (con clave)"; V="IMGBB"}
-) 0 { if ($ui -and $ui.panImgbbKey) { $ui.panImgbbKey.Visibility = if ((Get-ChipValor "hostImg") -eq "IMGBB") { "Visible" } else { "Collapsed" } } }
+    @{T="imgbb (con clave)"; V="IMGBB"},
+    @{T="imgbox (galería, sin clave)"; V="IMGBOX"}
+) 0 { Actualizar-PanelHost }
 
 # Estado de la subida
 $script:capRows = @()            # capturas: @{Ruta; Check; Subida(url)}
@@ -3099,11 +3124,139 @@ function Get-SpecsVideo($ruta) {
     return $r
 }
 
+# --- Estado de imgbox (galería por release + caché de miniatura/página por URL full) ---
+$script:imgboxGal = $null               # @{ Id; Secret; Titulo } de la galería de la release actual
+$script:imgboxMeta = @{}                 # urlFull -> @{ Thumb; Page } para construir miniatura→full
+
+# DPAPI (por usuario de Windows) vía SecureString: cifra/descifra la contraseña de imgbox en reposo.
+function Protect-Texto($plano) {
+    if ([string]::IsNullOrEmpty($plano)) { return "" }
+    try { ConvertFrom-SecureString (ConvertTo-SecureString $plano -AsPlainText -Force) } catch { "" }
+}
+function Unprotect-Texto($cifrado) {
+    if ([string]::IsNullOrEmpty($cifrado)) { return "" }
+    try { [System.Net.NetworkCredential]::new('', (ConvertTo-SecureString $cifrado)).Password } catch { "" }
+}
+
+# Título de la galería imgbox: SOLO «Título (Año)» de la peli/serie (datos que ya tiene el programa).
+function Get-GaleriaTitulo {
+    $ta = Get-TituloAnioLimpio $ui.upTitulo.Text
+    $t = "$($ta.Titulo)".Trim()
+    if ([string]::IsNullOrWhiteSpace($t)) { $t = "HD ZERO" }
+    if ($ta.Anio) { "$t ($($ta.Anio))" } else { $t }
+}
+
+# Cuerpo (función Invoke-ImgboxLote) compartido por la subida síncrona y el runspace de subida.
+# Sube una LISTA de imágenes a imgbox: handshake (cookie+CSRF), login de cuenta opcional, crea o
+# reutiliza la galería (por título) y sube cada imagen con multipart construido A MANO (imprescindible:
+# MultipartFormDataContent de .NET añade Content-Type a los campos y imgbox lo rechaza). Devuelve
+# @{ Gal=@{Id;Secret;Titulo}; Items=@(@{Ruta;Full;Thumb;Page;Error}); Aviso; CuentaOk }.
+$imgboxUploaderSrc = @'
+function Invoke-ImgboxLote {
+    param($rutas, $galTitulo, $usuario, $clave, $galExistente, $syncProg)
+    Add-Type -AssemblyName System.Net.Http | Out-Null
+    $ch = New-Object System.Net.CookieContainer
+    $hd = New-Object System.Net.Http.HttpClientHandler
+    $hd.CookieContainer = $ch
+    $hd.AutomaticDecompression = [System.Net.DecompressionMethods]::GZip -bor [System.Net.DecompressionMethods]::Deflate
+    $cli = New-Object System.Net.Http.HttpClient($hd)
+    $cli.Timeout = [TimeSpan]::FromSeconds(120)
+    $cli.DefaultRequestHeaders.Add("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+    $cli.DefaultRequestHeaders.Add("Accept","application/json, text/javascript, */*; q=0.01")
+    function _csrf($html) {
+        if ($html -match '<meta[^>]*name="csrf-token"[^>]*content="([^"]+)"') { return $matches[1] }
+        if ($html -match '<meta[^>]*content="([^"]+)"[^>]*name="csrf-token"') { return $matches[1] }
+        return $null
+    }
+    $homeHtml = $cli.GetStringAsync("https://imgbox.com/").Result
+    $csrf = _csrf $homeHtml
+    $aviso = $null; $cuentaOk = $false
+    if (-not [string]::IsNullOrWhiteSpace($usuario) -and -not [string]::IsNullOrWhiteSpace($clave)) {
+        try {
+            $lb = "authenticity_token=" + [Uri]::EscapeDataString("$csrf") +
+                  "&user%5Blogin%5D=" + [Uri]::EscapeDataString($usuario) +
+                  "&user%5Bpassword%5D=" + [Uri]::EscapeDataString($clave)
+            $lreq = New-Object System.Net.Http.HttpRequestMessage("Post","https://imgbox.com/login")
+            $lreq.Content = New-Object System.Net.Http.StringContent($lb,[System.Text.Encoding]::UTF8,"application/x-www-form-urlencoded")
+            $lreq.Headers.Referrer = [Uri]"https://imgbox.com/login"
+            [void]$cli.SendAsync($lreq).Result
+            $chk = $cli.GetStringAsync("https://imgbox.com/").Result
+            $c2 = _csrf $chk; if ($c2) { $csrf = $c2 }
+            if ($chk -match '/logout') { $cuentaOk = $true }
+        } catch {}
+        if (-not $cuentaOk) { $aviso = "No se pudo entrar en tu cuenta imgbox; las galerias se suben de forma anonima." }
+    }
+    $gid = "null"; $gsec = "null"
+    if ($galExistente -and $galExistente.Id -and ($galExistente.Titulo -eq $galTitulo)) {
+        $gid = $galExistente.Id; $gsec = $galExistente.Secret
+    }
+    $tokBody = if ($gid -eq "null") { "gallery=true&gallery_title=" + [Uri]::EscapeDataString("$galTitulo") + "&comments_enabled=0" } else { "" }
+    $treq = New-Object System.Net.Http.HttpRequestMessage("Post","https://imgbox.com/ajax/token/generate")
+    if ($tokBody) { $treq.Content = New-Object System.Net.Http.StringContent($tokBody,[System.Text.Encoding]::UTF8,"application/x-www-form-urlencoded") }
+    else { $treq.Content = New-Object System.Net.Http.StringContent("") }
+    if ($csrf) { $treq.Headers.Add("X-CSRF-Token","$csrf") }
+    $treq.Headers.Add("X-Requested-With","XMLHttpRequest")
+    $treq.Headers.Referrer = [Uri]"https://imgbox.com/"
+    $tjson = $cli.SendAsync($treq).Result.Content.ReadAsStringAsync().Result
+    $tok = $tjson | ConvertFrom-Json
+    if ($gid -eq "null" -and ($tok.PSObject.Properties.Name -contains 'gallery_id') -and $tok.gallery_id) {
+        $gid = "$($tok.gallery_id)"; $gsec = "$($tok.gallery_secret)"
+    }
+    $items = @()
+    foreach ($ruta in @($rutas)) {
+        $res = @{ Ruta=$ruta; Full=$null; Thumb=$null; Page=$null; Error=$null }
+        try {
+            $imgBytes = [System.IO.File]::ReadAllBytes($ruta)
+            $nombre = [System.IO.Path]::GetFileName($ruta)
+            $ext = ([System.IO.Path]::GetExtension($ruta)).TrimStart('.').ToLower()
+            $mime = switch ($ext) { "png" { "image/png" } "gif" { "image/gif" } "webp" { "image/webp" } default { "image/jpeg" } }
+            $boundary = "----WebKitFormBoundary" + ([guid]::NewGuid().ToString("N").Substring(0,16))
+            $enc = [System.Text.Encoding]::UTF8
+            $campos = [ordered]@{ token_id="$($tok.token_id)"; token_secret="$($tok.token_secret)"; content_type="1"; thumbnail_size="350r"; gallery_id="$gid"; gallery_secret="$gsec"; comments_enabled="0" }
+            $sb = New-Object System.Text.StringBuilder
+            foreach ($k in $campos.Keys) { [void]$sb.Append("--$boundary`r`nContent-Disposition: form-data; name=`"$k`"`r`n`r`n$($campos[$k])`r`n") }
+            [void]$sb.Append("--$boundary`r`nContent-Disposition: form-data; name=`"files[]`"; filename=`"$nombre`"`r`nContent-Type: $mime`r`n`r`n")
+            $preB = $enc.GetBytes($sb.ToString()); $postB = $enc.GetBytes("`r`n--$boundary--`r`n")
+            $body = New-Object byte[] ($preB.Length + $imgBytes.Length + $postB.Length)
+            [Array]::Copy($preB,0,$body,0,$preB.Length)
+            [Array]::Copy($imgBytes,0,$body,$preB.Length,$imgBytes.Length)
+            [Array]::Copy($postB,0,$body,$preB.Length+$imgBytes.Length,$postB.Length)
+            $ureq = New-Object System.Net.Http.HttpRequestMessage("Post","https://imgbox.com/upload/process")
+            $bc = New-Object System.Net.Http.ByteArrayContent(,$body)
+            $bc.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]"multipart/form-data; boundary=$boundary"
+            $ureq.Content = $bc
+            if ($csrf) { $ureq.Headers.Add("X-CSRF-Token","$csrf") }
+            $ureq.Headers.Add("X-Requested-With","XMLHttpRequest")
+            $ureq.Headers.Referrer = [Uri]"https://imgbox.com/"
+            $ubody = $cli.SendAsync($ureq).Result.Content.ReadAsStringAsync().Result
+            $f = ($ubody | ConvertFrom-Json).files[0]
+            if ($f.error) { $res.Error = "imgbox: $($f.error)" }
+            elseif ($f.original_url) { $res.Full = "$($f.original_url)"; $res.Thumb = "$($f.thumbnail_url)"; $res.Page = "$($f.url)" }
+            else { $res.Error = "imgbox no devolvio URL" }
+        } catch { $res.Error = $_.Exception.Message }
+        $items += $res
+        if ($syncProg) { $syncProg.Done = $syncProg.Done + 1 }
+    }
+    return @{ Gal=@{ Id=$gid; Secret=$gsec; Titulo=$galTitulo }; Items=$items; Aviso=$aviso; CuentaOk=$cuentaOk }
+}
+'@
+Invoke-Expression $imgboxUploaderSrc
+
 # --- Sube una imagen al host elegido; devuelve la URL full-size o $null ---
 function Send-Imagen($ruta) {
     $hostImg = Get-ChipValor "hostImg"
     try {
-        if ($hostImg -eq "IMGBB") {
+        if ($hostImg -eq "IMGBOX") {
+            $u = "$($ui.cfgImgboxUser.Text)".Trim()
+            $p = if ($ui.cfgImgboxPass) { "$($ui.cfgImgboxPass.Password)" } else { "" }
+            $rc = Invoke-ImgboxLote @($ruta) (Get-GaleriaTitulo) $u $p $script:imgboxGal $null
+            if ($rc.Gal) { $script:imgboxGal = $rc.Gal }
+            if ($rc.Aviso) { Set-Estado $rc.Aviso "warn" }
+            $it = $rc.Items[0]
+            if ($it.Error) { throw $it.Error }
+            if ($it.Full) { $script:imgboxMeta[$it.Full] = @{ Thumb=$it.Thumb; Page=$it.Page }; return $it.Full }
+            throw "imgbox no devolvió URL"
+        } elseif ($hostImg -eq "IMGBB") {
             $key = "$($ui.cfgImgbbKey.Text)".Trim()
             if ([string]::IsNullOrWhiteSpace($key)) { throw "falta la clave de imgbb (pestaña Ajustes)" }
             $b64 = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($ruta))
@@ -3122,8 +3275,25 @@ function Send-Imagen($ruta) {
 # Worker que sube una lista de imágenes EN UN RUNSPACE APARTE (no bloquea la UI). Comparte el
 # progreso por un hashtable sincronizado ($sync). Replica la lógica de Send-Imagen sin tocar $ui.
 $subidaWorker = {
-    param($rutas, $hostType, $imgbbKey, $sync)
+    param($rutas, $hostType, $imgbbKey, $sync, $imgboxUser, $imgboxPass, $galTitulo, $galInicial, $imgboxSrc)
     $urls = @()
+    if ($hostType -eq "IMGBOX") {
+        try {
+            if ($imgboxSrc) { Invoke-Expression $imgboxSrc }
+            $rc = Invoke-ImgboxLote $rutas $galTitulo $imgboxUser $imgboxPass $galInicial $sync
+            $meta = @{}; $errMsg = $null
+            foreach ($it in $rc.Items) {
+                if ($it.Error) { if (-not $errMsg) { $errMsg = "Error subiendo $([System.IO.Path]::GetFileName($it.Ruta)): $($it.Error)" } }
+                elseif ($it.Full) { $urls += $it.Full; $meta[$it.Full] = @{ Thumb=$it.Thumb; Page=$it.Page } }
+            }
+            $sync.Meta = $meta; $sync.GalInfo = $rc.Gal
+            if ($rc.Aviso) { $sync.Aviso = $rc.Aviso }
+            if ($errMsg) { $sync.Error = $errMsg }
+        } catch {
+            $sync.Error = "Error en imgbox: $($_.Exception.Message)"
+        }
+        $sync.Urls = $urls; $sync.Fin = $true; return
+    }
     foreach ($ruta in @($rutas)) {
         try {
             if ($hostType -eq "IMGBB") {
@@ -3156,19 +3326,26 @@ function Start-SubidaAsync($rutas, [scriptblock]$onComplete, $botones = @()) {
     if ($hostType -eq "IMGBB" -and [string]::IsNullOrWhiteSpace($imgbbKey)) {
         Set-Estado "Falta la clave de imgbb (pestaña Ajustes)." "error"; return
     }
+    # imgbox: credenciales (opcionales) y título de la galería (= «Título (Año)»), leídos en el hilo UI.
+    $imgboxUser = ""; $imgboxPass = ""; $galTitulo = ""
+    if ($hostType -eq "IMGBOX") {
+        $imgboxUser = "$($ui.cfgImgboxUser.Text)".Trim()
+        $imgboxPass = if ($ui.cfgImgboxPass) { "$($ui.cfgImgboxPass.Password)" } else { "" }
+        $galTitulo  = Get-GaleriaTitulo
+    }
     $script:subOnComplete = $onComplete
     $script:subBotones = @($botones)
     foreach ($b in $script:subBotones) { if ($b) { $b.IsEnabled = $false } }
 
-    $sync = [hashtable]::Synchronized(@{ Done = 0; Total = $rutas.Count; Urls = @(); Fin = $false; Error = $null })
+    $sync = [hashtable]::Synchronized(@{ Done = 0; Total = $rutas.Count; Urls = @(); Fin = $false; Error = $null; Meta = $null; GalInfo = $null; Aviso = $null })
     $script:subSync = $sync
     $ui.panSubProgreso.Visibility = "Visible"
     $ui.barSubProgreso.Value = 0
-    $ui.lblSubProgreso.Text = "Subiendo imágenes al host…"
+    $ui.lblSubProgreso.Text = if ($hostType -eq "IMGBOX") { "Subiendo imágenes a imgbox (galería)…" } else { "Subiendo imágenes al host…" }
     $ui.lblSubProgresoPct.Text = "0/$($rutas.Count)"
 
     $ps = [powershell]::Create()
-    [void]$ps.AddScript($subidaWorker.ToString()).AddArgument($rutas).AddArgument($hostType).AddArgument($imgbbKey).AddArgument($sync)
+    [void]$ps.AddScript($subidaWorker.ToString()).AddArgument($rutas).AddArgument($hostType).AddArgument($imgbbKey).AddArgument($sync).AddArgument($imgboxUser).AddArgument($imgboxPass).AddArgument($galTitulo).AddArgument($script:imgboxGal).AddArgument($imgboxUploaderSrc)
     $script:subPS = $ps
     $script:subAsync = $ps.BeginInvoke()
 
@@ -3189,6 +3366,10 @@ function Start-SubidaAsync($rutas, [scriptblock]$onComplete, $botones = @()) {
                 $ui.panSubProgreso.Visibility = "Collapsed"
                 foreach ($b in $script:subBotones) { if ($b) { $b.IsEnabled = $true } }
                 $cb = $script:subOnComplete; $err = $s.Error; $urls = @($s.Urls)
+                # imgbox: guardar la galería de la release y la caché miniatura→full antes de insertar.
+                if ($s.GalInfo) { $script:imgboxGal = $s.GalInfo }
+                if ($s.Meta) { foreach ($k in $s.Meta.Keys) { $script:imgboxMeta[$k] = $s.Meta[$k] } }
+                if ($s.Aviso) { Set-Estado $s.Aviso "warn" }
                 $script:subSync = $null; $script:subOnComplete = $null
                 if ($err) { Set-Estado $err "error" }
                 elseif ($cb) { & $cb $urls }
@@ -3446,7 +3627,20 @@ function Insert-ImagenesEnDescripcion($urls) {
     $tb = $ui.upDescripcion
     $txt = $tb.Text
     if ([string]::IsNullOrWhiteSpace($txt)) { $txt = $script:descVacia }
-    $tags = @($urls | ForEach-Object { "[img=350]$_" + "[/img]" })
+    # Para imgbox: miniatura enlazada a la imagen full ([url=full][img]thumb[/img][/url]). Para el
+    # resto de hosts (freeimage/imgbb): [img=350]full[/img] como siempre.
+    $tags = @($urls | ForEach-Object {
+        $u = "$_"
+        $m = $script:imgboxMeta[$u]
+        if ($m -and $m.Thumb) {
+            "[url=$u][img]$($m.Thumb)" + "[/img][/url]"
+        } elseif ($u -match '(?i)^https?://images\d*\.imgbox\.com/.+_o\.[a-z0-9]+$') {
+            $thumb = ($u -replace '(?i)://images', '://thumbs') -replace '(?i)_o\.', '_t.'
+            "[url=$u][img]$thumb" + "[/img][/url]"
+        } else {
+            "[img=350]$u" + "[/img]"
+        }
+    })
     $lineas = @()
     for ($i = 0; $i -lt $tags.Count; $i += 5) {
         $fin = [Math]::Min($i + 4, $tags.Count - 1)
@@ -4510,6 +4704,13 @@ function Guardar-Ajustes {
             TrackerToken   = & $keep $ui.cfgTrackerToken.Text "TrackerToken"
             HostImg        = ChipPersist "hostImg"
             ImgbbKey       = & $keep $ui.cfgImgbbKey.Text "ImgbbKey"
+            ImgboxUser     = & $keep $ui.cfgImgboxUser.Text "ImgboxUser"
+            ImgboxPass     = $(
+                                $pw = "$($ui.cfgImgboxPass.Password)"
+                                if ($pw.Length -gt 0) { Protect-Texto $pw }
+                                elseif ($prev -and "$($prev.ImgboxPass)".Length -gt 0) { "$($prev.ImgboxPass)" }
+                                else { "" }
+                              )
             TmdbKey        = & $keep $ui.cfgTmdbKey.Text  "TmdbKey"
             Firma          = $(if ($script:firmaSel) { Split-Path $script:firmaSel -Leaf } else { "" })
             Announce       = & $keep $ui.txtAnnounce.Text "Announce"
@@ -4553,6 +4754,8 @@ function Restaurar-Ajustes {
         $vTrackerUrl   = & $rescatar "TrackerUrl";   if ($vTrackerUrl)   { $ui.cfgTrackerUrl.Text   = $vTrackerUrl }
         $vTrackerToken = & $rescatar "TrackerToken"; if ($vTrackerToken) { $ui.cfgTrackerToken.Text = $vTrackerToken }
         $vImgbbKey     = & $rescatar "ImgbbKey";     if ($vImgbbKey)     { $ui.cfgImgbbKey.Text     = $vImgbbKey }
+        $vImgboxUser   = & $rescatar "ImgboxUser";   if ($vImgboxUser)   { $ui.cfgImgboxUser.Text   = $vImgboxUser }
+        $vImgboxPass   = & $rescatar "ImgboxPass";   if ($vImgboxPass -and $ui.cfgImgboxPass) { $ui.cfgImgboxPass.Password = (Unprotect-Texto $vImgboxPass) }
         $vTmdbKey      = & $rescatar "TmdbKey";      if ($vTmdbKey)      { $ui.cfgTmdbKey.Text      = $vTmdbKey }
         if ($aj.Firma)        { $script:firmaSel = Join-Path $rutaFirmas "$($aj.Firma)" }
         & $chip "hostImg" $aj.HostImg
@@ -4990,7 +5193,7 @@ function Reset-Todo {
     Actualizar-Filtro
     Actualizar-Torrent
     Actualizar-TipoCategoria
-    $ui.panImgbbKey.Visibility = if ((Get-ChipValor "hostImg") -eq "IMGBB") { "Visible" } else { "Collapsed" }
+    Actualizar-PanelHost
 
     # Si no hay montaje en curso, ocultar la barra de progreso
     if (-not ($script:procMontaje -and -not $script:procMontaje.HasExited)) {
@@ -5441,7 +5644,7 @@ Actualizar-TipoCategoria
 Construir-Firmas
 if ([string]::IsNullOrWhiteSpace($ui.upDescripcion.Text)) { Reset-Descripcion }
 Init-Tabs
-$ui.panImgbbKey.Visibility = if ((Get-ChipValor "hostImg") -eq "IMGBB") { "Visible" } else { "Collapsed" }
+Actualizar-PanelHost
 Set-Estado "Elige la carpeta de los vídeos: las opciones se adaptarán a lo que se detecte."
 
 if ($script:modoTest) {
