@@ -3164,12 +3164,26 @@ function Unprotect-Texto($cifrado) {
     try { [System.Net.NetworkCredential]::new('', (ConvertTo-SecureString $cifrado)).Password } catch { "" }
 }
 
-# Título de la galería imgbox: SOLO «Título (Año)» de la peli/serie (datos que ya tiene el programa).
+# Título de la galería imgbox, con los datos que ya tiene el programa:
+#   · Película:            «Título (Año)»
+#   · Serie, temporada:    «Título (Año) SXX»         (episodio 0/vacío = pack de temporada)
+#   · Serie, un episodio:  «Título (Año) SXXEXX»
 function Get-GaleriaTitulo {
     $ta = Get-TituloAnioLimpio $ui.upTitulo.Text
     $t = "$($ta.Titulo)".Trim()
-    if ([string]::IsNullOrWhiteSpace($t)) { $t = "HD ZERO" }
-    if ($ta.Anio) { "$t ($($ta.Anio))" } else { $t }
+    if ([string]::IsNullOrWhiteSpace($t)) { $t = "$($ui.upTitulo.Text)".Trim() }  # mejor el título bruto que un genérico
+    if ([string]::IsNullOrWhiteSpace($t)) { return "HD ZERO" }
+    $base = if ($ta.Anio) { "$t ($($ta.Anio))" } else { $t }
+    if ($script:tmdbTipo -eq "tv") {
+        $temp = [int]("0" + (("$($ui.upTemporada.Text)") -replace '\D', ''))
+        $epi  = [int]("0" + (("$($ui.upEpisodio.Text)")  -replace '\D', ''))
+        if ($temp -gt 0) {
+            $sxx = "S{0:00}" -f $temp
+            if ($epi -gt 0) { return "$base $sxx" + ("E{0:00}" -f $epi) }
+            return "$base $sxx"
+        }
+    }
+    return $base
 }
 
 # Cuerpo (función Invoke-ImgboxLote) compartido por la subida síncrona y el runspace de subida.
@@ -3653,20 +3667,8 @@ function Insert-ImagenesEnDescripcion($urls) {
     $tb = $ui.upDescripcion
     $txt = $tb.Text
     if ([string]::IsNullOrWhiteSpace($txt)) { $txt = $script:descVacia }
-    # Para imgbox: miniatura enlazada a la imagen full ([url=full][img]thumb[/img][/url]). Para el
-    # resto de hosts (freeimage/imgbb): [img=350]full[/img] como siempre.
-    $tags = @($urls | ForEach-Object {
-        $u = "$_"
-        $m = $script:imgboxMeta[$u]
-        if ($m -and $m.Thumb) {
-            "[url=$u][img]$($m.Thumb)" + "[/img][/url]"
-        } elseif ($u -match '(?i)^https?://images\d*\.imgbox\.com/.+_o\.[a-z0-9]+$') {
-            $thumb = ($u -replace '(?i)://images', '://thumbs') -replace '(?i)_o\.', '_t.'
-            "[url=$u][img]$thumb" + "[/img][/url]"
-        } else {
-            "[img=350]$u" + "[/img]"
-        }
-    })
+    # Todas las capturas (cualquier host, imgbox incluido) se insertan como [img=350]full[/img].
+    $tags = @($urls | ForEach-Object { "[img=350]$_" + "[/img]" })
     $lineas = @()
     for ($i = 0; $i -lt $tags.Count; $i += 5) {
         $fin = [Math]::Min($i + 4, $tags.Count - 1)
