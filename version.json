@@ -1,7 +1,7 @@
 {
   "version": "1.2.3",
   "fecha": "2026-06-20",
-  "notas": "Arreglo: ahora puedes elegir archivos de unidades de red (discos en red) en los dialogos de Examinar y Añadir imagenes. El programa ya no se ejecuta como administrador (no lo necesita); si se abria elevado tras instalar, Windows ocultaba las unidades de red mapeadas. Ahora se relanza solo sin privilegios. Incluye tambien el host imgbox de la version anterior (galeria por release con miniaturas).",
+  "notas": "Nuevo host de imagenes imgbox (sin clave): agrupa las capturas en una galeria por release y las inserta como miniatura enlazada a la imagen completa.",
   "archivos": [
     "VERSION.txt",
     "HDZ-GUI.ps1",
