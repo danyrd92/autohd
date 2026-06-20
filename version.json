@@ -1,5 +1,5 @@
 {
-  "version": "1.2.4",
+  "version": "1.2.5",
   "fecha": "2026-06-20",
   "notas": "Nuevo host de imagenes imgbox (sin clave): agrupa las capturas de cada release en una galeria.",
   "archivos": [
