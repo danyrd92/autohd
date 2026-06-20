@@ -3164,24 +3164,46 @@ function Unprotect-Texto($cifrado) {
     try { [System.Net.NetworkCredential]::new('', (ConvertTo-SecureString $cifrado)).Password } catch { "" }
 }
 
-# Título de la galería imgbox, con los datos que ya tiene el programa:
+# Título de la galería imgbox:
 #   · Película:            «Título (Año)»
-#   · Serie, temporada:    «Título (Año) SXX»         (episodio 0/vacío = pack de temporada)
+#   · Serie, temporada:    «Título (Año) SXX»          (episodio 0/vacío = pack de temporada)
 #   · Serie, un episodio:  «Título (Año) SXXEXX»
-function Get-GaleriaTitulo {
-    $ta = Get-TituloAnioLimpio $ui.upTitulo.Text
+# El TÍTULO+AÑO sale de la info del programa (título de la subida) y, si no hay, DEL NOMBRE DE LAS
+# CAPTURAS (su archivo conserva el nombre del vídeo). La TEMPORADA/EPISODIO se buscan, por orden, en
+# los campos de la subida, en el título y en el nombre de las capturas.
+function Get-GaleriaTitulo($rutasCapturas = @()) {
+    $esTv = ($script:tmdbTipo -eq "tv")
+    # Nombre base de la 1ª captura (sin extensión ni sufijo «_cap_NNNN»).
+    $nombreCap = ""
+    foreach ($ruta in @($rutasCapturas)) {
+        $n = [System.IO.Path]::GetFileNameWithoutExtension("$ruta") -replace '(?i)_cap_\d+$', ''
+        if (-not [string]::IsNullOrWhiteSpace($n)) { $nombreCap = $n; break }
+    }
+    # Título + año: del título de la subida; si no hay, del nombre de las capturas.
+    $ta = Get-TituloAnioLimpio "$($ui.upTitulo.Text)"
+    if ([string]::IsNullOrWhiteSpace("$($ta.Titulo)") -and $nombreCap) { $ta = Get-TituloAnioLimpio $nombreCap }
     $t = "$($ta.Titulo)".Trim()
-    if ([string]::IsNullOrWhiteSpace($t)) { $t = "$($ui.upTitulo.Text)".Trim() }  # mejor el título bruto que un genérico
-    if ([string]::IsNullOrWhiteSpace($t)) { return "HD ZERO" }
+    if ([string]::IsNullOrWhiteSpace($t)) {
+        $raw = "$($ui.upTitulo.Text)".Trim()
+        return $(if (-not [string]::IsNullOrWhiteSpace($raw)) { $raw } else { "HD ZERO" })
+    }
     $base = if ($ta.Anio) { "$t ($($ta.Anio))" } else { $t }
-    if ($script:tmdbTipo -eq "tv") {
-        $temp = [int]("0" + (("$($ui.upTemporada.Text)") -replace '\D', ''))
-        $epi  = [int]("0" + (("$($ui.upEpisodio.Text)")  -replace '\D', ''))
-        if ($temp -gt 0) {
-            $sxx = "S{0:00}" -f $temp
-            if ($epi -gt 0) { return "$base $sxx" + ("E{0:00}" -f $epi) }
-            return "$base $sxx"
+    if (-not $esTv) { return $base }
+    # Temporada/episodio: campos -> título de la subida -> nombre de las capturas.
+    $temp = [int]("0" + (("$($ui.upTemporada.Text)") -replace '\D', ''))
+    $epi  = [int]("0" + (("$($ui.upEpisodio.Text)")  -replace '\D', ''))
+    if ($temp -le 0) {
+        foreach ($src in @("$($ui.upTitulo.Text)", $nombreCap)) {
+            if ($temp -le 0 -and "$src" -match '(?i)S(\d{1,3})(E(\d{1,4}))?') {
+                $temp = [int]$matches[1]
+                if ($matches[3] -and $epi -le 0) { $epi = [int]$matches[3] }
+            }
         }
+    }
+    if ($temp -gt 0) {
+        $sxx = "S{0:00}" -f $temp
+        if ($epi -gt 0) { return "$base $sxx" + ("E{0:00}" -f $epi) }
+        return "$base $sxx"
     }
     return $base
 }
@@ -3289,7 +3311,7 @@ function Send-Imagen($ruta) {
         if ($hostImg -eq "IMGBOX") {
             $u = "$($ui.cfgImgboxUser.Text)".Trim()
             $p = if ($ui.cfgImgboxPass) { "$($ui.cfgImgboxPass.Password)" } else { "" }
-            $rc = Invoke-ImgboxLote @($ruta) (Get-GaleriaTitulo) $u $p $script:imgboxGal $null
+            $rc = Invoke-ImgboxLote @($ruta) (Get-GaleriaTitulo @($ruta)) $u $p $script:imgboxGal $null
             if ($rc.Gal) { $script:imgboxGal = $rc.Gal }
             if ($rc.Aviso) { Set-Estado $rc.Aviso "warn" }
             $it = $rc.Items[0]
@@ -3371,7 +3393,7 @@ function Start-SubidaAsync($rutas, [scriptblock]$onComplete, $botones = @()) {
     if ($hostType -eq "IMGBOX") {
         $imgboxUser = "$($ui.cfgImgboxUser.Text)".Trim()
         $imgboxPass = if ($ui.cfgImgboxPass) { "$($ui.cfgImgboxPass.Password)" } else { "" }
-        $galTitulo  = Get-GaleriaTitulo
+        $galTitulo  = Get-GaleriaTitulo $rutas
     }
     $script:subOnComplete = $onComplete
     $script:subBotones = @($botones)
