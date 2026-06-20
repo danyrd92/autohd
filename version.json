@@ -1,7 +1,7 @@
 {
   "version": "1.2.4",
   "fecha": "2026-06-20",
-  "notas": "imgbox: capturas insertadas como [img=350] y galerias de series con su temporada (SXX) o episodio (SXXEXX) en el nombre.",
+  "notas": "Nuevo host de imagenes imgbox (sin clave): agrupa las capturas de cada release en una galeria.",
   "archivos": [
     "VERSION.txt",
     "HDZ-GUI.ps1",
