@@ -6013,10 +6013,19 @@ $win.Add_Loaded({
     try {
         $win.ShowInTaskbar = $false
         $win.ShowInTaskbar = $true
-        Set-IconoNativo $win   # el toggle recreó el HWND → reaplicar el icono nativo (si no, barra sin icono)
+        Set-IconoNativo $win   # el toggle recreó el HWND → reaplicar el icono nativo
         if ($win.WindowState -eq [System.Windows.WindowState]::Minimized) { $win.WindowState = [System.Windows.WindowState]::Normal }
         [void]$win.Activate()
         $win.Topmost = $true; $win.Topmost = $false
+    } catch {}
+    # …y otra vez ~0,9 s después (timer): para entonces la barra de tareas YA creó su botón, y este
+    # reenvío de WM_SETICON sí lo actualiza. La reaplicación síncrona llegaba demasiado pronto (botón
+    # aún sin crear) y se quedaba en blanco. El timer dispara incluso durante el pop-up (bucle modal).
+    try {
+        $script:tIcono = New-Object System.Windows.Threading.DispatcherTimer
+        $script:tIcono.Interval = [TimeSpan]::FromMilliseconds(900)
+        $script:tIcono.Add_Tick({ $script:tIcono.Stop(); try { Set-IconoNativo $win } catch {} })
+        $script:tIcono.Start()
     } catch {}
     # Buscar actualizaciones EN PRIMER LUGAR (red de seguridad: aunque luego se muestre un diálogo
     # modal, durante su bucle de mensajes este chequeo puede correr y ofrecer la actualización).
@@ -6031,6 +6040,7 @@ $win.Add_Loaded({
     if (-not $script:modoTest -and -not $script:bienvenidaVista -and [string]::IsNullOrWhiteSpace($ui.cfgTrackerToken.Text)) {
         try { Show-Bienvenida -Owner $win } catch {}
     }
+    try { Set-IconoNativo $win } catch {}   # reaplicar tras los diálogos de arranque
 })
 $win.Add_Closing({ Guardar-Ajustes })
 
