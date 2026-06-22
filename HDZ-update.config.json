@@ -1,0 +1,4 @@
+{
+  "_comentario": "Fuente de actualizaciones. baseUrl = servidor propio (relay en Proxmox vía Tailscale Funnel). Si baseUrl está, se usa; si no, se cae a GitHub (repo/rama). Aquí: solo servidor propio.",
+  "baseUrl": "https://hdz-relay.tail843da1.ts.net/update"
+}

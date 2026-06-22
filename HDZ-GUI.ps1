@@ -65,6 +65,202 @@ if (-not $script:modoTest) {
 if (Test-Path -LiteralPath $rutaTorrentMod) { . $rutaTorrentMod }
 
 # =========================================================================
+# LOG POR PROYECTO — un archivo por CARPETA DE TRABAJO que acumula TODO el flujo
+# (escaneo, identificación, audio/subs, montaje, capturas, torrent, imágenes y subida).
+# Se guarda en logs\ junto al programa (respaldo a %APPDATA% si no es escribible). Las
+# credenciales (token, passkey del announce, contraseña de imgbox, claves) se CENSURAN.
+# =========================================================================
+$script:logRuta = $null
+$script:logCarpeta = $null
+$script:montajeInicio = $null
+
+function Get-DirLogs {
+    $d = Join-Path $PSScriptRoot "logs"
+    try {
+        if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
+        $probe = Join-Path $d ".w_$PID.tmp"
+        Set-Content -LiteralPath $probe -Value "1" -ErrorAction Stop
+        Remove-Item -LiteralPath $probe -ErrorAction SilentlyContinue
+        return $d
+    } catch {}
+    $d2 = Join-Path $env:APPDATA "HD ZERO Studio\logs"
+    try { if (-not (Test-Path -LiteralPath $d2)) { New-Item -ItemType Directory -Path $d2 -Force | Out-Null } } catch {}
+    return $d2
+}
+
+# Censura cualquier secreto del usuario que aparezca en el texto a registrar.
+function Redacta-Log($texto) {
+    $t = "$texto"
+    if ($ui) {
+        $secretos = @(
+            "$($ui.cfgTrackerToken.Text)".Trim(),
+            "$($ui.txtAnnounce.Text)".Trim(),
+            "$($ui.cfgImgbbKey.Text)".Trim(),
+            $(if ($ui.cfgImgboxPass) { "$($ui.cfgImgboxPass.Password)" } else { "" })
+        )
+        foreach ($s in $secretos) { if ($s -and $s.Length -ge 6) { $t = $t.Replace($s, "[CENSURADO]") } }
+    }
+    $t = $t -replace '(?i)(passkey=)[A-Za-z0-9]+', '${1}[CENSURADO]'
+    $t = $t -replace '(?i)(api_token=)[A-Za-z0-9\-_\.]+', '${1}[CENSURADO]'
+    $t = $t -replace '(?i)(/announce/)[A-Za-z0-9]{8,}', '${1}[CENSURADO]'
+    return $t
+}
+
+# Fija (o reutiliza) el log de la carpeta de trabajo dada. Mismo proyecto -> mismo archivo.
+function Iniciar-LogProyecto($carpeta) {
+    if ($script:modoTest) { return }
+    $carpeta = "$carpeta".Trim()
+    if ([string]::IsNullOrWhiteSpace($carpeta)) { return }
+    if ($script:logCarpeta -eq $carpeta -and $script:logRuta) { return }
+    try {
+        $leaf = (Split-Path $carpeta -Leaf) -replace '[^\w\.\-]', '_'; if (-not $leaf) { $leaf = "proyecto" }
+        $bytes = [System.Security.Cryptography.MD5]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes($carpeta.ToLower()))
+        $hash = (($bytes[0..3] | ForEach-Object { $_.ToString('x2') }) -join '')
+        $script:logRuta = Join-Path (Get-DirLogs) ("proyecto_${leaf}_${hash}.log")
+        $script:logCarpeta = $carpeta
+        $nueva = -not (Test-Path -LiteralPath $script:logRuta)
+        $ver = try { (Get-Content -LiteralPath (Join-Path $PSScriptRoot "VERSION.txt") -Raw -ErrorAction Stop).Trim() } catch { "$($script:HDZVersion)" }
+        $sep = "==================================================================="
+        $cab = @()
+        if ($nueva) {
+            $cab += $sep; $cab += " HD ZERO Studio · LOG DE PROYECTO"; $cab += " Carpeta: $carpeta"; $cab += $sep
+        }
+        $cab += ""; $cab += $sep
+        $cab += " NUEVA SESIÓN · $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') · v$ver"
+        $cab += $sep
+        Add-Content -LiteralPath $script:logRuta -Value ($cab -join "`r`n") -Encoding UTF8
+    } catch {}
+}
+
+function Log-Linea($msg) {
+    if ($script:modoTest -or -not $script:logRuta) { return }
+    try { Add-Content -LiteralPath $script:logRuta -Value ("[$(Get-Date -Format 'HH:mm:ss')] " + (Redacta-Log $msg)) -Encoding UTF8 } catch {}
+}
+function Log-Sec($titulo) {
+    if ($script:modoTest -or -not $script:logRuta) { return }
+    try { Add-Content -LiteralPath $script:logRuta -Value ("`r`n----- " + (Redacta-Log $titulo) + " -----") -Encoding UTF8 } catch {}
+}
+function Log-Bloque($titulo, $texto) {
+    Log-Sec $titulo
+    if ($script:modoTest -or -not $script:logRuta) { return }
+    try { Add-Content -LiteralPath $script:logRuta -Value (Redacta-Log "$texto") -Encoding UTF8 } catch {}
+}
+
+# Resumen del escaneo (vídeos detectados con sus pistas de audio/subtítulos).
+function Log-Escaneo($carpeta, $res) {
+    if ($script:modoTest) { return }
+    Iniciar-LogProyecto $carpeta
+    Log-Sec "ESCANEO · $(@($res).Count) vídeo(s) en la carpeta"
+    foreach ($f in @($res)) {
+        Log-Linea "• $($f.Nombre)"
+        foreach ($a in @($f.Audios)) {
+            $ln = "    audio: $($a.Codec) | $($a.Lang) | $($a.Channels)ch"
+            if ($a.Forced) { $ln += " | forced" }
+            if ($a.Title)  { $ln += " | titulo: $($a.Title)" }
+            Log-Linea $ln
+        }
+        foreach ($s in @($f.Subs)) {
+            $ln = "    sub:   $($s.Codec) | $($s.Lang)"
+            if ($s.Forced) { $ln += " | forced" }
+            if ($s.Title)  { $ln += " | titulo: $($s.Title)" }
+            Log-Linea $ln
+        }
+    }
+}
+
+# Anexa al log de proyecto el log detallado que generó el MOTOR (HDZnew.ps1) en este montaje.
+function Anexar-LogMontaje($carpeta) {
+    if ($script:modoTest -or -not $script:logRuta) { return }
+    try {
+        $desde = if ($script:montajeInicio) { $script:montajeInicio.AddSeconds(-5) } else { (Get-Date).AddHours(-6) }
+        $dirs = @((Join-Path $PSScriptRoot "logs"), "$carpeta", (Join-Path $env:APPDATA "HD ZERO Studio\logs"))
+        $cands = @()
+        foreach ($d in $dirs) {
+            if ($d -and (Test-Path -LiteralPath $d)) {
+                $cands += @(Get-ChildItem -LiteralPath $d -File -Filter "hdz_montaje_*.log" -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $desde })
+            }
+        }
+        $log = $cands | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($log) {
+            Log-Sec "MONTAJE · log del motor ($($log.Name))"
+            Add-Content -LiteralPath $script:logRuta -Value (Get-Content -LiteralPath $log.FullName -Raw -Encoding UTF8) -Encoding UTF8
+        } else {
+            Log-Linea "(no se encontró el log del motor para anexar)"
+        }
+    } catch {}
+}
+
+# --- Envío del log a soporte (vía relay propio; el token de Telegram vive SOLO en el servidor) ---
+# La URL del relay y la clave compartida NO van en el código (este archivo es público en GitHub):
+# se leen de "soporte.cfg", que viaja DENTRO del exe pero NO se publica en el repo. Si el archivo
+# no está (p. ej. instalación que aún no lo trae), el botón queda "no configurado".
+$script:soporteUrl = ""
+$script:soporteKey = ""
+# Lee soporte.cfg desde la carpeta del programa o, si no, desde %APPDATA% (ahí lo deja la descarga
+# silenciosa cuando un usuario migra al canal de actualización propio).
+function Cargar-SoporteCfg {
+    foreach ($p in @((Join-Path $PSScriptRoot "soporte.cfg"), (Join-Path $env:APPDATA "HDZ-soporte.cfg"))) {
+        try {
+            if (Test-Path -LiteralPath $p) {
+                $sop = Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($sop.url) { $script:soporteUrl = "$($sop.url)".Trim() }
+                if ($sop.key) { $script:soporteKey = "$($sop.key)".Trim() }
+                if (-not [string]::IsNullOrWhiteSpace($script:soporteUrl)) { return }
+            }
+        } catch {}
+    }
+}
+Cargar-SoporteCfg
+
+function Get-UltimoLog {
+    if ($script:logRuta -and (Test-Path -LiteralPath $script:logRuta)) { return $script:logRuta }
+    try {
+        $f = Get-ChildItem -LiteralPath (Get-DirLogs) -File -Filter "proyecto_*.log" -ErrorAction SilentlyContinue |
+             Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($f) { return $f.FullName }
+    } catch {}
+    return $null
+}
+
+function Enviar-LogSoporte {
+    if ([string]::IsNullOrWhiteSpace($script:soporteUrl)) { Cargar-SoporteCfg }
+    if ([string]::IsNullOrWhiteSpace($script:soporteUrl)) {
+        Set-Estado "El envío de logs a soporte aún no está configurado." "warn"; return
+    }
+    $log = Get-UltimoLog
+    if (-not $log) { Set-Estado "Todavía no hay ningún log que enviar (procesa o sube algo primero)." "warn"; return }
+    $proyecto = if ($script:logCarpeta) { Split-Path $script:logCarpeta -Leaf } else { [System.IO.Path]::GetFileNameWithoutExtension($log) }
+    $confirm = Show-DialogoHDZ -Owner $win -Icono "📤" -Titulo "Enviar log a soporte" `
+        -Mensaje "Se enviará el log del proyecto «$proyecto» al soporte para diagnóstico.`n`nLas claves (token, passkey, contraseña) van censuradas en el log. ¿Enviar?" `
+        -BotonSi "Enviar" -BotonNo "Cancelar"
+    if (-not $confirm) { return }
+    try {
+        $ver = try { (Get-Content -LiteralPath (Join-Path $PSScriptRoot "VERSION.txt") -Raw -ErrorAction Stop).Trim() } catch { "$($script:HDZVersion)" }
+        $usuario = if ($ui.cfgUsuarioSoporte) { "$($ui.cfgUsuarioSoporte.Text)".Trim() } else { "" }
+        if ([string]::IsNullOrWhiteSpace($usuario)) { $usuario = "(sin alias)" }
+        $form = @{
+            log      = Get-Item -LiteralPath $log
+            proyecto = "$proyecto"
+            usuario  = "$usuario"
+            equipo   = "$env:COMPUTERNAME / $env:USERNAME"
+            version  = "$ver"
+        }
+        $headers = @{ Accept = "text/plain" }
+        if ($script:soporteKey) { $headers["X-HDZ-Key"] = $script:soporteKey }
+        Set-Estado "Enviando log a soporte…"
+        if ($ui.btnEnviarLog) { $ui.btnEnviarLog.IsEnabled = $false }
+        [void](Invoke-RestMethod -Uri $script:soporteUrl -Method Post -Form $form -Headers $headers -TimeoutSec 60)
+        Set-Estado "✓  Log enviado a soporte. ¡Gracias!" "ok"
+    } catch {
+        $det = $_.Exception.Message
+        if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $det = $_.ErrorDetails.Message }
+        Set-Estado "No se pudo enviar el log: $det" "error"
+    } finally {
+        if ($ui.btnEnviarLog) { $ui.btnEnviarLog.IsEnabled = $true }
+    }
+}
+
+# =========================================================================
 # CATÁLOGOS Y NORMALIZACIÓN DE IDIOMAS (espejo de Get-LanguageCode del script)
 # =========================================================================
 $idiomasFiltro = @(
@@ -1323,6 +1519,15 @@ $xaml = @'
               </StackPanel>
             </Border>
             <Border Style="{StaticResource Card}">
+              <StackPanel>
+                <TextBlock Style="{StaticResource H}" Text="Soporte"/>
+                <TextBlock Style="{StaticResource D}" Text="Si algo falla, envía el registro (log) del proyecto al soporte para diagnóstico. Las claves van censuradas; nunca se comparten."/>
+                <TextBlock Style="{StaticResource Lbl}" Text="Tu usuario / alias (para que el soporte sepa de quién es el log)"/>
+                <TextBox x:Name="cfgUsuarioSoporte" Style="{StaticResource Input}" Width="420" HorizontalAlignment="Left"/>
+                <Button x:Name="btnEnviarLog" Style="{StaticResource Ghost}" Content="📤  Enviar log a soporte" HorizontalAlignment="Left" Margin="0,12,0,0"/>
+              </StackPanel>
+            </Border>
+            <Border Style="{StaticResource Card}">
               <TextBlock Style="{StaticResource D}" Margin="0"
                          Text="⚠  Estas claves dan acceso a tu cuenta. No las compartas. Si alguna se filtró, regenérala en el sitio correspondiente."/>
             </Border>
@@ -1444,7 +1649,7 @@ $refs = @("txtCarpeta","btnExaminar","lblResumen","panListado","imgLogo","panLog
           "upAnon","upPersonal","upAudioEd","upProper","upDV","upHDR10P","upHDR10","upModQueue",
           "upNfo","btnNfoExaminar","btnSubir",
           "cfgTrackerUrl","cfgTrackerToken","chHostImg","panImgbbKey","cfgImgbbKey","cfgTmdbKey",
-          "panImgboxCuenta","cfgImgboxUser","cfgImgboxPass")
+          "panImgboxCuenta","cfgImgboxUser","cfgImgboxPass","btnEnviarLog","cfgUsuarioSoporte")
 $ui = @{}
 foreach ($r in $refs) { $ui[$r] = $win.FindName($r) }
 
@@ -2495,7 +2700,10 @@ $script:pollTimer.Add_Tick({
         try { $res = @($script:scanPS.EndInvoke($script:scanAsync)) } catch {}
         try { $script:scanPS.Dispose() } catch {}
         $script:scanPS = $null; $script:scanAsync = $null
-        if ($script:scanGenLanzado -eq $script:scanGen) { Aplicar-Analisis $res }
+        if ($script:scanGenLanzado -eq $script:scanGen) {
+            Aplicar-Analisis $res
+            try { Log-Escaneo "$($ui.txtCarpeta.Text)" $res } catch {}
+        }
     }
 })
 
@@ -3433,6 +3641,13 @@ function Start-SubidaAsync($rutas, [scriptblock]$onComplete, $botones = @()) {
                 if ($s.Meta) { foreach ($k in $s.Meta.Keys) { $script:imgboxMeta[$k] = $s.Meta[$k] } }
                 if ($s.Aviso) { Set-Estado $s.Aviso "warn" }
                 $script:subSync = $null; $script:subOnComplete = $null
+                try {
+                    if ($script:videoSubir) { Iniciar-LogProyecto (Split-Path $script:videoSubir -Parent) }
+                    Log-Sec "IMÁGENES · subidas al host «$(Get-ChipValor 'hostImg')» ($(@($urls).Count))"
+                    if ($script:imgboxGal) { Log-Linea "Galería imgbox: «$($script:imgboxGal.Titulo)» (id $($script:imgboxGal.Id))" }
+                    foreach ($u in @($urls)) { Log-Linea "  $u" }
+                    if ($err) { Log-Linea "ERROR: $err" }
+                } catch {}
                 if ($err) { Set-Estado $err "error" }
                 elseif ($cb) { & $cb $urls }
             }
@@ -3527,6 +3742,12 @@ function Start-CapturasAsync {
                 $todas = @($previas + $nuevas | Select-Object -Unique)
                 Construir-Capturas $todas
                 Set-Estado "✓  $($nuevas.Count) captura(s) creada(s) junto al vídeo." "ok"
+                try {
+                    if ($script:videoSubir) { Iniciar-LogProyecto (Split-Path $script:videoSubir -Parent) }
+                    Log-Sec "CAPTURAS · generadas ($($nuevas.Count))"
+                    Log-Linea "Vídeo: $(Split-Path $script:videoSubir -Leaf)"
+                    foreach ($c in @($nuevas)) { Log-Linea "  + $(Split-Path $c -Leaf)" }
+                } catch {}
             }
         })
     }
@@ -4249,8 +4470,20 @@ function Start-CrearTorrentAsync($tipo, $ruta) {
                 $ui.panTorrentProgreso.Visibility = "Collapsed"
                 foreach ($b in @($ui.btnCrearTorrentArchivo, $ui.btnCrearTorrentCarpeta, $ui.btnTorrentExaminar, $ui.btnTorrentUltimo)) { $b.IsEnabled = $true }
                 $res = $s.Resultado; $err = $s.Error; $script:torSync = $null
-                if ($err) { Set-Estado "No se pudo crear el torrent: $err" "error" }
-                elseif ($res) { Set-Estado "✓  Torrent creado: $(Split-Path $res -Leaf)" "ok"; Cargar-TorrentParaSubir $res $script:torVideoHint }
+                if ($err) {
+                    Set-Estado "No se pudo crear el torrent: $err" "error"
+                    try { Log-Sec "TORRENT · error"; Log-Linea "$err" } catch {}
+                }
+                elseif ($res) {
+                    Set-Estado "✓  Torrent creado: $(Split-Path $res -Leaf)" "ok"
+                    try {
+                        if ($script:torVideoHint) { Iniciar-LogProyecto (Split-Path $script:torVideoHint -Parent) }
+                        Log-Sec "TORRENT · creado"
+                        Log-Linea "Archivo: $(Split-Path $res -Leaf)"
+                        Log-Linea "Ruta: $res"
+                    } catch {}
+                    Cargar-TorrentParaSubir $res $script:torVideoHint
+                }
             }
         })
     }
@@ -4700,10 +4933,22 @@ function Invoke-SubidaTracker {
             $form.nfo = Get-Item -LiteralPath $ui.upNfo.Text
         }
 
+        # LOG de proyecto: punto SUBIDA AL TRACKER (campos enviados, sin binarios ni secretos).
+        try {
+            if ($script:videoSubir) { Iniciar-LogProyecto (Split-Path $script:videoSubir -Parent) }
+            elseif ($rutaTorrent) { Iniciar-LogProyecto (Split-Path $rutaTorrent -Parent) }
+            Log-Sec "SUBIDA AL TRACKER · petición"
+            Log-Linea "Destino: $baseUrl/api/torrents/upload"
+            Log-Linea "Torrent: $(Split-Path $rutaTorrent -Leaf)"
+            $camposLog = foreach ($k in $form.Keys) { if ($k -notin @('torrent', 'nfo')) { "$k = $($form[$k])" } }
+            Log-Bloque "Campos enviados" ($camposLog -join "`r`n")
+        } catch {}
+
         $uri = "$baseUrl/api/torrents/upload?api_token=$token"
         $resp = Invoke-RestMethod -Uri $uri -Method Post -Form $form -Headers @{ "Accept" = "application/json" } -TimeoutSec 300
 
         $msg = "$($resp.message)$($resp.data)"
+        try { Log-Sec "SUBIDA AL TRACKER · respuesta"; Log-Linea "success=$($resp.success) | message=$($resp.message) | data=$($resp.data)" } catch {}
         if ("$($resp.success)" -eq "True" -or "$msg" -match "(?i)success|uploaded|éxito") {
             Set-SubidaEstado "✓  Subido correctamente. $msg" "ok"
         } else {
@@ -4713,12 +4958,14 @@ function Invoke-SubidaTracker {
         $detalle = $_.Exception.Message
         if ($_.ErrorDetails -and $_.ErrorDetails.Message) { $detalle = $_.ErrorDetails.Message }
         Set-SubidaEstado "Error en la subida: $detalle" "error"
+        try { Log-Sec "SUBIDA AL TRACKER · error"; Log-Linea "$detalle" } catch {}
     } finally {
         $ui.btnSubir.IsEnabled = $true
     }
 }
 
 $ui.btnSubir.Add_Click({ Invoke-SubidaTracker })
+if ($ui.btnEnviarLog) { $ui.btnEnviarLog.Add_Click({ Enviar-LogSoporte }) }
 
 # =========================================================================
 # PERSISTENCIA DE AJUSTES
@@ -4762,6 +5009,7 @@ function Guardar-Ajustes {
                                 else { "" }
                               )
             TmdbKey        = & $keep $ui.cfgTmdbKey.Text  "TmdbKey"
+            UsuarioSoporte = "$($ui.cfgUsuarioSoporte.Text)".Trim()
             Firma          = $(if ($script:firmaSel) { Split-Path $script:firmaSel -Leaf } else { "" })
             Announce       = & $keep $ui.txtAnnounce.Text "Announce"
             UltimaVersionDescartada = $script:ajusteVerDescartada
@@ -4807,6 +5055,7 @@ function Restaurar-Ajustes {
         $vImgboxUser   = & $rescatar "ImgboxUser";   if ($vImgboxUser)   { $ui.cfgImgboxUser.Text   = $vImgboxUser }
         $vImgboxPass   = & $rescatar "ImgboxPass";   if ($vImgboxPass -and $ui.cfgImgboxPass) { $ui.cfgImgboxPass.Password = (Unprotect-Texto $vImgboxPass) }
         $vTmdbKey      = & $rescatar "TmdbKey";      if ($vTmdbKey)      { $ui.cfgTmdbKey.Text      = $vTmdbKey }
+        if ($aj.UsuarioSoporte) { $ui.cfgUsuarioSoporte.Text = "$($aj.UsuarioSoporte)" }
         if ($aj.Firma)        { $script:firmaSel = Join-Path $rutaFirmas "$($aj.Firma)" }
         & $chip "hostImg" $aj.HostImg
         $vAnnounce = & $rescatar "Announce"; if ($vAnnounce) { $ui.txtAnnounce.Text = $vAnnounce }
@@ -5006,6 +5255,16 @@ $ui.btnIniciar.Add_Click({
         $cfgPath = Join-Path $env:TEMP "hdz_gui_config_$marca.json"
         $cfg | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $cfgPath -Encoding UTF8
 
+        # LOG de proyecto: punto MONTAJE (todas las decisiones que se mandan al motor).
+        try {
+            Iniciar-LogProyecto $carpeta
+            $script:montajeInicio = Get-Date
+            Log-Sec "MONTAJE · lanzado"
+            $selNombres = @($cfg.Archivos | ForEach-Object { "$($_.Nombre)" }) -join ", "
+            if ($selNombres) { Log-Linea "Archivos seleccionados: $selNombres" }
+            Log-Bloque "Decisiones enviadas al motor (configuración)" ($cfg | ConvertTo-Json -Depth 6)
+        } catch {}
+
         # Fichero de progreso (lo escribe HDZnew.ps1) y bandera de visibilidad de la consola
         # (la vigila un hilo nativo dentro del propio proceso de consola). Empieza oculta = "0".
         $progPath = Join-Path $env:TEMP "hdz_gui_progreso_$marca.json"
@@ -5153,6 +5412,11 @@ function Iniciar-SondeoProgreso {
             $ui.lblProgreso.Text = "Proceso finalizado."
             $ui.panProgreso2.Visibility = "Collapsed"
             Set-Estado "✓  El montaje ha finalizado. Revisa la carpeta y el log." "ok"
+            try {
+                Log-Sec "MONTAJE · finalizado"
+                Log-Linea "Código de salida del motor: $codigo"
+                Anexar-LogMontaje $script:logCarpeta
+            } catch {}
             $script:procMontaje = $null
         }
     })
@@ -5492,6 +5756,97 @@ function Show-Bienvenida {
     [void]$b.ShowDialog()
 }
 
+# Pop-up OBLIGATORIO de nombre de usuario: no se puede cerrar ni saltar; sin un nombre, no se
+# puede usar el programa. Se muestra al arrancar mientras no haya un usuario establecido.
+function Show-UsuarioObligatorio {
+    param([System.Windows.Window]$Owner = $null)
+    $xamlU = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        SizeToContent="Height" Width="520" ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterScreen" FontFamily="Segoe UI" FontSize="13"
+        UseLayoutRounding="True" SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
+  <Window.Resources>
+    <Style x:Key="In" TargetType="TextBox">
+      <Setter Property="Background" Value="#0E0E11"/><Setter Property="Foreground" Value="#EDEDEF"/>
+      <Setter Property="CaretBrush" Value="#EDEDEF"/><Setter Property="BorderBrush" Value="#242429"/>
+      <Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="10,8"/><Setter Property="FontSize" Value="13.5"/>
+      <Setter Property="Template"><Setter.Value>
+        <ControlTemplate TargetType="TextBox">
+          <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
+            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}"/>
+          </Border>
+          <ControlTemplate.Triggers><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="bd" Property="BorderBrush" Value="#D92B2B"/></Trigger></ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value></Setter>
+    </Style>
+    <Style x:Key="P" TargetType="Button">
+      <Setter Property="Foreground" Value="White"/><Setter Property="FontSize" Value="13.5"/>
+      <Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template"><Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="bd" Background="#D92B2B" CornerRadius="9" Padding="26,10"><ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Center"/></Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Background" Value="#EF4444"/></Trigger>
+            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="bd" Property="Background" Value="#3A2326"/><Setter Property="Foreground" Value="#8A8A92"/></Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value></Setter>
+    </Style>
+    <Style x:Key="Lb" TargetType="TextBlock"><Setter Property="Foreground" Value="#EDEDEF"/><Setter Property="FontSize" Value="12.5"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Margin" Value="2,0,0,5"/></Style>
+  </Window.Resources>
+  <Border Background="#131316" BorderBrush="#2E2E35" BorderThickness="1" CornerRadius="14" Margin="16">
+    <Border.Effect><DropShadowEffect BlurRadius="30" ShadowDepth="7" Opacity="0.55" Color="#000000"/></Border.Effect>
+    <StackPanel Margin="30,26,30,24">
+      <StackPanel x:Name="barra">
+        <TextBlock Text="Antes de empezar" Foreground="#EDEDEF" FontSize="18" FontWeight="SemiBold"/>
+        <TextBlock Text="Establece un nombre de usuario para poder usar el programa." Foreground="#9C9CA8" FontSize="13" Margin="0,2,0,0" TextWrapping="Wrap"/>
+      </StackPanel>
+      <Border Background="#101013" BorderBrush="#242429" BorderThickness="1" CornerRadius="9" Padding="12,9" Margin="0,14,0,16">
+        <TextBlock Foreground="#9C9CA8" FontSize="12" TextWrapping="Wrap"
+          Text="👤  Preferiblemente, usa tu usuario de Telegram o el del tracker. Así el soporte podrá identificarte si pides ayuda o envías un log."/>
+      </Border>
+      <TextBlock Style="{StaticResource Lb}" Text="Nombre de usuario"/>
+      <TextBox x:Name="uNom" Style="{StaticResource In}"/>
+      <TextBlock x:Name="uErr" Foreground="#E0A422" FontSize="11.5" Margin="2,7,0,0" TextWrapping="Wrap" Text=""/>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+        <Button x:Name="uSave" Style="{StaticResource P}" Content="Continuar"/>
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</Window>
+'@
+    $w = [Windows.Markup.XamlReader]::Parse($xamlU)
+    $g = @{}
+    foreach ($n in @("barra","uNom","uSave","uErr")) { $g[$n] = $w.FindName($n) }
+    $g.uNom.Text = "$($ui.cfgUsuarioSoporte.Text)"
+    $script:usuarioOk = $false
+    $g.barra.Add_MouseLeftButtonDown({ try { $w.DragMove() } catch {} }.GetNewClosure())
+    # El botón "Continuar" solo se habilita cuando hay un nombre escrito.
+    $refrescar = { $g.uSave.IsEnabled = -not [string]::IsNullOrWhiteSpace($g.uNom.Text) }.GetNewClosure()
+    & $refrescar
+    $g.uNom.Add_TextChanged($refrescar)
+    $g.uSave.IsDefault = $true
+    $g.uSave.Add_Click({
+        $val = "$($g.uNom.Text)".Trim()
+        if ([string]::IsNullOrWhiteSpace($val)) { $g.uErr.Text = "Escribe un nombre de usuario para poder continuar."; return }
+        $ui.cfgUsuarioSoporte.Text = $val
+        Guardar-Ajustes
+        $script:usuarioOk = $true
+        $w.Close()
+    }.GetNewClosure())
+    # No se puede cerrar sin nombre: se cancela cualquier intento de cierre (X no hay; Alt+F4 se anula).
+    $w.Add_Closing({ param($s, $e) if (-not $script:usuarioOk) { $e.Cancel = $true } })
+    # ESC no cierra.
+    $w.Add_PreviewKeyDown({ param($s, $e) if ($e.Key -eq 'Escape') { $e.Handled = $true } })
+    if ($Owner) { $w.Owner = $Owner; $w.WindowStartupLocation = "CenterOwner" }
+    [void]$g.uNom.Focus()
+    [void]$w.ShowDialog()
+}
+
 $ui.btnReset.Add_Click({
     $ok = Show-DialogoHDZ -Owner $win -Icono "🗑" -Titulo "Empezar de Zero" `
         -Mensaje "Se borrará la carpeta seleccionada y todas las opciones marcadas, dejando el programa como recién abierto.`n`nNo se borra ningún archivo del disco ni tus credenciales de Ajustes.`n`n¿Continuar?" `
@@ -5557,23 +5912,39 @@ function Iniciar-ChequeoActualizacion {
         $cfgPath = Join-Path $PSScriptRoot "HDZ-update.config.json"
         if (-not (Test-Path -LiteralPath $cfgPath)) { return }
         $cfg = Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        $repo = "$($cfg.repo)"; $rama = "$($cfg.rama)"; if (-not $rama) { $rama = "main" }
-        if ([string]::IsNullOrWhiteSpace($repo) -or $repo -like "*USUARIO/REPO*") { return }   # repo sin configurar → no se busca
-        $url = "https://raw.githubusercontent.com/$repo/$rama/version.json"
+        # Fuente de actualización: si hay "baseUrl" (servidor propio) se usa esa; si no, GitHub raw.
+        $baseCfg = "$($cfg.baseUrl)".Trim()
+        if ($baseCfg) {
+            $url = ($baseCfg.TrimEnd('/')) + "/version.json"
+        } else {
+            $repo = "$($cfg.repo)"; $rama = "$($cfg.rama)"; if (-not $rama) { $rama = "main" }
+            if ([string]::IsNullOrWhiteSpace($repo) -or $repo -like "*USUARIO/REPO*") { return }   # sin configurar → no se busca
+            $url = "https://raw.githubusercontent.com/$repo/$rama/version.json"
+        }
+        # Si aún no tenemos soporte.cfg y usamos servidor propio, lo descargamos en SILENCIO a
+        # %APPDATA% (sin segundo aviso de versión): resuelve el caso de usuarios que migran al canal propio.
+        if ([string]::IsNullOrWhiteSpace($script:soporteUrl) -and $baseCfg) {
+            $soporteUrlDescarga = ($baseCfg.TrimEnd('/')) + "/soporte.cfg"
+            $soporteDest = Join-Path $env:APPDATA "HDZ-soporte.cfg"
+        }
     } catch { return }
 
     $sync = [hashtable]::Synchronized(@{ Hecho = $false; Json = $null })
     $script:updSync = $sync
     $worker = {
-        param($url, $sync)
+        param($url, $sync, $soporteUrl, $soporteDest)
         try {
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
             $sync.Json = Invoke-RestMethod -Uri $url -UseBasicParsing -TimeoutSec 20
         } catch {}
+        # Descarga silenciosa de soporte.cfg (best-effort).
+        if ($soporteUrl -and $soporteDest) {
+            try { Invoke-WebRequest -Uri $soporteUrl -OutFile $soporteDest -UseBasicParsing -TimeoutSec 15 } catch {}
+        }
         $sync.Hecho = $true
     }
     $ps = [powershell]::Create()
-    [void]$ps.AddScript($worker.ToString()).AddArgument($url).AddArgument($sync)
+    [void]$ps.AddScript($worker.ToString()).AddArgument($url).AddArgument($sync).AddArgument($soporteUrlDescarga).AddArgument($soporteDest)
     $script:updPS = $ps; $script:updAsync = $ps.BeginInvoke()
 
     $t = New-Object System.Windows.Threading.DispatcherTimer
@@ -5584,6 +5955,7 @@ function Iniciar-ChequeoActualizacion {
         $script:updTimer.Stop()
         try { $script:updPS.EndInvoke($script:updAsync) } catch {}
         try { $script:updPS.Dispose() } catch {}
+        try { Cargar-SoporteCfg } catch {}   # por si se acaba de descargar soporte.cfg en silencio
         $j = $s.Json; $script:updSync = $null
         if (-not $j -or -not $j.version) { return }
         $verRemota = "$($j.version)"; $verLocal = Get-VersionLocal
@@ -5637,6 +6009,11 @@ $win.Add_Loaded({
         [void]$win.Activate()
         $win.Topmost = $true; $win.Topmost = $false
     } catch {}
+    # OBLIGATORIO antes de nada: nombre de usuario. El pop-up no se puede cerrar ni saltar; sin un
+    # nombre, el programa no se puede usar. Solo aparece mientras no haya un usuario establecido.
+    if (-not $script:modoTest -and [string]::IsNullOrWhiteSpace($ui.cfgUsuarioSoporte.Text)) {
+        try { Show-UsuarioObligatorio -Owner $win } catch {}
+    }
     # Primer arranque: si aún no hay token de tracker y no se mostró antes, guiamos al usuario con
     # la ventana de bienvenida para que ponga SUS credenciales (se guardan solo en su %APPDATA%).
     if (-not $script:modoTest -and -not $script:bienvenidaVista -and [string]::IsNullOrWhiteSpace($ui.cfgTrackerToken.Text)) {

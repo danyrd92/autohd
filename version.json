@@ -1,17 +1,11 @@
 {
-  "version": "1.2.5",
-  "fecha": "2026-06-20",
-  "notas": "Nuevo host de imagenes imgbox (sin clave): agrupa las capturas de cada release en una galeria.",
+  "version": "1.3.0",
+  "fecha": "2026-06-22",
+  "notas": "Nuevo: registro detallado por proyecto y boton 'Enviar log a soporte' en Ajustes. Al abrir, el programa te pedira un nombre de usuario.",
   "archivos": [
     "VERSION.txt",
     "HDZ-GUI.ps1",
-    "HDZnew.ps1",
-    "HDZ-Torrent.ps1"
-  ],
-  "herramientas": {
-    "mkvtoolnix": "99.0",
-    "mediainfo": "26.05",
-    "ffmpeg": "latest",
-    "dovi_tool": "latest"
-  }
+    "instalacion/Actualizar-HDZStudio.ps1",
+    "HDZ-update.config.json"
+  ]
 }
