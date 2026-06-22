@@ -5823,7 +5823,6 @@ function Show-UsuarioObligatorio {
     $g = @{}
     foreach ($n in @("barra","uNom","uSave","uErr")) { $g[$n] = $w.FindName($n) }
     $g.uNom.Text = "$($ui.cfgUsuarioSoporte.Text)"
-    $script:usuarioOk = $false
     $g.barra.Add_MouseLeftButtonDown({ try { $w.DragMove() } catch {} }.GetNewClosure())
     # El botón "Continuar" solo se habilita cuando hay un nombre escrito.
     $refrescar = { $g.uSave.IsEnabled = -not [string]::IsNullOrWhiteSpace($g.uNom.Text) }.GetNewClosure()
@@ -5835,11 +5834,12 @@ function Show-UsuarioObligatorio {
         if ([string]::IsNullOrWhiteSpace($val)) { $g.uErr.Text = "Escribe un nombre de usuario para poder continuar."; return }
         $ui.cfgUsuarioSoporte.Text = $val
         Guardar-Ajustes
-        $script:usuarioOk = $true
+        $w.Tag = "ok"     # marca en el PROPIO objeto ventana (evita la trampa de $script: con GetNewClosure)
         $w.Close()
     }.GetNewClosure())
     # No se puede cerrar sin nombre: se cancela cualquier intento de cierre (X no hay; Alt+F4 se anula).
-    $w.Add_Closing({ param($s, $e) if (-not $script:usuarioOk) { $e.Cancel = $true } })
+    # El handler lee la marca del 'sender' (la ventana), no de $script:, para que el cierre funcione.
+    $w.Add_Closing({ param($s, $e) if ("$($s.Tag)" -ne "ok") { $e.Cancel = $true } })
     # ESC no cierra.
     $w.Add_PreviewKeyDown({ param($s, $e) if ($e.Key -eq 'Escape') { $e.Handled = $true } })
     if ($Owner) { $w.Owner = $Owner; $w.WindowStartupLocation = "CenterOwner" }
@@ -6009,6 +6009,9 @@ $win.Add_Loaded({
         [void]$win.Activate()
         $win.Topmost = $true; $win.Topmost = $false
     } catch {}
+    # Buscar actualizaciones EN PRIMER LUGAR (red de seguridad: aunque luego se muestre un diálogo
+    # modal, durante su bucle de mensajes este chequeo puede correr y ofrecer la actualización).
+    try { $win.Dispatcher.InvokeAsync([action]{ Iniciar-ChequeoActualizacion }, [System.Windows.Threading.DispatcherPriority]::Background) | Out-Null } catch {}
     # OBLIGATORIO antes de nada: nombre de usuario. El pop-up no se puede cerrar ni saltar; sin un
     # nombre, el programa no se puede usar. Solo aparece mientras no haya un usuario establecido.
     if (-not $script:modoTest -and [string]::IsNullOrWhiteSpace($ui.cfgUsuarioSoporte.Text)) {
@@ -6019,8 +6022,6 @@ $win.Add_Loaded({
     if (-not $script:modoTest -and -not $script:bienvenidaVista -and [string]::IsNullOrWhiteSpace($ui.cfgTrackerToken.Text)) {
         try { Show-Bienvenida -Owner $win } catch {}
     }
-    # Buscar actualizaciones en segundo plano (no molesta si no hay repo configurado o no hay novedad).
-    try { $win.Dispatcher.InvokeAsync([action]{ Iniciar-ChequeoActualizacion }, [System.Windows.Threading.DispatcherPriority]::Background) | Out-Null } catch {}
 })
 $win.Add_Closing({ Guardar-Ajustes })
 
