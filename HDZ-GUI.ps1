@@ -5869,6 +5869,22 @@ public static extern System.IntPtr LoadImage(System.IntPtr hinst, string lpszNam
 [System.Runtime.InteropServices.DllImport("user32.dll")]
 public static extern System.IntPtr SendMessage(System.IntPtr hWnd, int Msg, System.IntPtr wParam, System.IntPtr lParam);
 '@
+# Fija el icono NATIVO (WM_SETICON) en el HWND ACTUAL de la ventana. Hay que poder reaplicarlo:
+# cambiar ShowInTaskbar recrea el HWND y se pierde el icono puesto en el anterior (la barra de
+# tareas se quedaba sin icono, p. ej. durante el pop-up de usuario al arrancar).
+function Set-IconoNativo($w) {
+    try {
+        $h = (New-Object System.Windows.Interop.WindowInteropHelper($w)).Handle
+        if ($h -eq [IntPtr]::Zero) { return }
+        $rutaIco = Join-Path $PSScriptRoot "HDZ.ico"
+        if (-not (Test-Path -LiteralPath $rutaIco)) { return }
+        $IMAGE_ICON = 1; $LR_LOADFROMFILE = 0x10; $WM_SETICON = 0x80
+        $hBig   = [HdzNative.IconApi]::LoadImage([IntPtr]::Zero, $rutaIco, $IMAGE_ICON, 64, 64, $LR_LOADFROMFILE)
+        $hSmall = [HdzNative.IconApi]::LoadImage([IntPtr]::Zero, $rutaIco, $IMAGE_ICON, 16, 16, $LR_LOADFROMFILE)
+        if ($hBig   -ne [IntPtr]::Zero) { [void][HdzNative.IconApi]::SendMessage($h, $WM_SETICON, [IntPtr]1, $hBig) }
+        if ($hSmall -ne [IntPtr]::Zero) { [void][HdzNative.IconApi]::SendMessage($h, $WM_SETICON, [IntPtr]0, $hSmall) }
+    } catch {}
+}
 # Estado del proceso de montaje en curso y de su consola (oculta por defecto).
 $script:procMontaje   = $null
 $script:rutaFlagCons  = $null   # fichero-bandera: "1" visible / "0" oculta
@@ -5882,16 +5898,8 @@ $win.Add_SourceInitialized({
         $oscuro = 1
         [void][HdzNative.Dwm]::DwmSetWindowAttribute($h, 20, [ref]$oscuro, 4)
         [void][HdzNative.Dwm]::DwmSetWindowAttribute($h, 19, [ref]$oscuro, 4)
-        # Icono nativo desde HDZ.ico: frame de 64 px para la barra (se reescala nítido) y de 16
-        # para la barra de título. Así el icono ya no sale diminuto.
-        $rutaIco = Join-Path $PSScriptRoot "HDZ.ico"
-        if (Test-Path -LiteralPath $rutaIco) {
-            $IMAGE_ICON = 1; $LR_LOADFROMFILE = 0x10; $WM_SETICON = 0x80
-            $hBig   = [HdzNative.IconApi]::LoadImage([IntPtr]::Zero, $rutaIco, $IMAGE_ICON, 64, 64, $LR_LOADFROMFILE)
-            $hSmall = [HdzNative.IconApi]::LoadImage([IntPtr]::Zero, $rutaIco, $IMAGE_ICON, 16, 16, $LR_LOADFROMFILE)
-            if ($hBig   -ne [IntPtr]::Zero) { [void][HdzNative.IconApi]::SendMessage($h, $WM_SETICON, [IntPtr]1, $hBig) }
-            if ($hSmall -ne [IntPtr]::Zero) { [void][HdzNative.IconApi]::SendMessage($h, $WM_SETICON, [IntPtr]0, $hSmall) }
-        }
+        # Icono nativo desde HDZ.ico (frames reales 64/16 → nítido en barra de tareas y título).
+        Set-IconoNativo $win
     } catch {}
 })
 # Al cargar: como el proceso arranca oculto (vía .vbs), el botón de la barra de tareas a veces no
@@ -6005,6 +6013,7 @@ $win.Add_Loaded({
     try {
         $win.ShowInTaskbar = $false
         $win.ShowInTaskbar = $true
+        Set-IconoNativo $win   # el toggle recreó el HWND → reaplicar el icono nativo (si no, barra sin icono)
         if ($win.WindowState -eq [System.Windows.WindowState]::Minimized) { $win.WindowState = [System.Windows.WindowState]::Normal }
         [void]$win.Activate()
         $win.Topmost = $true; $win.Topmost = $false
