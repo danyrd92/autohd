@@ -6018,13 +6018,19 @@ $win.Add_Loaded({
         [void]$win.Activate()
         $win.Topmost = $true; $win.Topmost = $false
     } catch {}
-    # …y otra vez ~0,9 s después (timer): para entonces la barra de tareas YA creó su botón, y este
-    # reenvío de WM_SETICON sí lo actualiza. La reaplicación síncrona llegaba demasiado pronto (botón
-    # aún sin crear) y se quedaba en blanco. El timer dispara incluso durante el pop-up (bucle modal).
+    # Reaplicar el icono VARIAS veces desde muy pronto: en cuanto la barra de tareas crea su botón
+    # (unos cientos de ms), este reenvío de WM_SETICON lo pinta. Reintentar cada 150 ms y parar al
+    # cabo de ~1,5 s evita el retraso de un único tick tardío (visible sobre todo con el pop-up,
+    # que bloquea Add_Loaded; el timer sí dispara en el bucle modal del diálogo).
     try {
+        $script:iconoTicks = 0
         $script:tIcono = New-Object System.Windows.Threading.DispatcherTimer
-        $script:tIcono.Interval = [TimeSpan]::FromMilliseconds(900)
-        $script:tIcono.Add_Tick({ $script:tIcono.Stop(); try { Set-IconoNativo $win } catch {} })
+        $script:tIcono.Interval = [TimeSpan]::FromMilliseconds(150)
+        $script:tIcono.Add_Tick({
+            $script:iconoTicks++
+            try { Set-IconoNativo $win } catch {}
+            if ($script:iconoTicks -ge 10) { $script:tIcono.Stop() }
+        })
         $script:tIcono.Start()
     } catch {}
     # Buscar actualizaciones EN PRIMER LUGAR (red de seguridad: aunque luego se muestre un diálogo
